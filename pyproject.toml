@@ -1,0 +1,74 @@
+[project]
+name = "phd-copilot"
+version = "0.2.0"
+description = "Agentic PhD/scholarship hunting platform. Paste any listing URL, upload your CV, get ranked matches + cover letters."
+authors = [{ name = "Yassin Sedki" }]
+readme = "README.md"
+requires-python = ">=3.11,<4.0"
+
+dependencies = [
+    # Web
+    "fastapi>=0.115,<0.116",
+    "uvicorn[standard]>=0.32,<0.33",
+    "python-multipart>=0.0.20,<0.1",
+
+    # Database — PostgreSQL is the supported runtime
+    "sqlalchemy>=2.0,<3.0",
+    "psycopg2-binary>=2.9,<3.0",
+    "alembic>=1.13,<2.0",
+
+    # Auth
+    "pyjwt>=2.10,<3.0",
+    "bcrypt>=4.2,<5.0",
+
+    # Config + validation
+    "pydantic[email]>=2.10,<3.0",
+    "pydantic-settings>=2.7,<3.0",
+    "email-validator>=2.2,<3.0",
+
+    # HTTP + scraping
+    "httpx>=0.28,<0.29",
+    "beautifulsoup4>=4.12,<5.0",
+
+    # CV parsing
+    "pypdf>=5.1,<6.0",
+    "python-docx>=1.1,<2.0",
+
+    # Agents + LLM
+    "langchain>=0.3,<0.4",
+    "langchain-core>=0.3,<0.4",
+    "langchain-anthropic>=0.3,<0.4",
+    "langgraph>=0.2,<0.3",
+    "cohere>=5.11,<6.0",
+
+    # Scheduling
+    "apscheduler>=3.10,<4.0",
+]
+
+[project.optional-dependencies]
+# `poetry install --extras playwright` adds Chromium scrape fallback.
+playwright = ["playwright>=1.49,<2.0"]
+
+[tool.poetry]
+packages = [
+    { include = "app", from = "backend" },
+    { include = "shared" },
+    { include = "worker" },
+]
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^8.2"
+pytest-asyncio = "^0.23"
+ruff = "^0.5"
+
+[build-system]
+requires = ["poetry-core>=1.8"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.ruff]
+line-length = 110
+target-version = "py311"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["backend/tests", "worker/tests"]
