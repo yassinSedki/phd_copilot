@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from shared.llm.base import Message
 from shared.llm.errors import LLMError, LLMErrorCode
+from shared.llm.retry import acall_with_retry, call_with_retry
 from shared.llm.standard import StandardLLMClient
 
 
@@ -82,15 +83,21 @@ class CohereChatProvider(StandardLLMClient):
             return str(response)
 
     def invoke(self, messages: list[Message], *, json_mode: bool = False) -> str:
-        try:
-            response = self._client.chat(messages=messages, **self._kwargs(json_mode))
-            return self._extract_text(response)
-        except Exception as exc:
-            raise _translate_error(exc) from exc
+        def _once() -> str:
+            try:
+                response = self._client.chat(messages=messages, **self._kwargs(json_mode))
+                return self._extract_text(response)
+            except Exception as exc:
+                raise _translate_error(exc) from exc
+
+        return call_with_retry(_once)
 
     async def ainvoke(self, messages: list[Message], *, json_mode: bool = False) -> str:
-        try:
-            response = await self._async_client.chat(messages=messages, **self._kwargs(json_mode))
-            return self._extract_text(response)
-        except Exception as exc:
-            raise _translate_error(exc) from exc
+        async def _once() -> str:
+            try:
+                response = await self._async_client.chat(messages=messages, **self._kwargs(json_mode))
+                return self._extract_text(response)
+            except Exception as exc:
+                raise _translate_error(exc) from exc
+
+        return await acall_with_retry(_once)

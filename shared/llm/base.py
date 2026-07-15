@@ -11,11 +11,16 @@ from abc import ABC, abstractmethod
 from typing import Any, Optional
 
 from shared.llm.types import (
+    DraftedDocument,
     DraftedLetter,
     EmailBody,
     ExtractedListing,
+    ExtractedProfile,
     OutreachDraft,
     ParsedListing,
+    ReferenceEmailDraft,
+    RefinedDocument,
+    RefinedEmail,
     RefinedLetter,
     ResearchSummary,
     ScoreResult,
@@ -95,6 +100,7 @@ class LLMClient(ABC):
         profile: dict[str, Any],
         research: ResearchSummary,
         *,
+        personal_note: Optional[str] = None,
         model: Optional[str] = None,
     ) -> OutreachDraft:
         ...
@@ -128,4 +134,111 @@ class LLMClient(ABC):
         *,
         model: Optional[str] = None,
     ) -> list[ExtractedListing]:
+        ...
+
+    @abstractmethod
+    def extract_listing_detail(
+        self,
+        hint: ExtractedListing,
+        detail_text: str,
+        source_url: str,
+        *,
+        model: Optional[str] = None,
+    ) -> ExtractedListing:
+        """Re-extract/enrich one listing from its own dedicated page. `hint`
+        is the (possibly incomplete/noisy) card extracted from the crowded
+        search-results page; the detail page is authoritative."""
+        ...
+
+    @abstractmethod
+    def extract_profile_from_cv(
+        self,
+        cv_text: str,
+        *,
+        model: Optional[str] = None,
+    ) -> ExtractedProfile:
+        ...
+
+    @abstractmethod
+    def draft_document(
+        self,
+        profile: dict[str, Any],
+        listing: dict[str, Any],
+        template: str,
+        doc_type: str,
+        red_flags: list[str],
+        *,
+        model: Optional[str] = None,
+    ) -> DraftedDocument:
+        ...
+
+    @abstractmethod
+    def refine_document(
+        self,
+        doc_type: str,
+        current_body: str,
+        chat_history: list[Message],
+        user_message: str,
+        *,
+        profile: dict[str, Any],
+        listing: dict[str, Any],
+        model: Optional[str] = None,
+    ) -> RefinedDocument:
+        ...
+
+    @abstractmethod
+    def draft_reference_request(
+        self,
+        referee: dict[str, Any],
+        student: dict[str, Any],
+        position: dict[str, Any],
+        deadline: Optional[str],
+        submission_method: str,
+        personal_note: Optional[str],
+        *,
+        model: Optional[str] = None,
+    ) -> ReferenceEmailDraft:
+        ...
+
+    @abstractmethod
+    def draft_reference_followup(
+        self,
+        referee: dict[str, Any],
+        position: dict[str, Any],
+        sent_at: Optional[str],
+        due_at: Optional[str],
+        *,
+        model: Optional[str] = None,
+    ) -> ReferenceEmailDraft:
+        ...
+
+    @abstractmethod
+    def refine_email(
+        self,
+        kind: str,
+        current_subject: str,
+        current_body: str,
+        chat_history: list[Message],
+        user_message: str,
+        *,
+        context: dict[str, Any],
+        model: Optional[str] = None,
+    ) -> RefinedEmail:
+        """Chat-driven revision of a reference-request or supervisor-outreach
+        email draft. `kind` is "reference_request" | "supervisor_outreach";
+        `context` carries whatever the caller already has (referee/professor,
+        position, profile) to keep the revision grounded."""
+        ...
+
+    @abstractmethod
+    def explain_fit(
+        self,
+        profile: dict[str, Any],
+        listing: dict[str, Any],
+        breakdown: dict[str, Any],
+        reasons: str,
+        red_flags: list[str],
+        *,
+        model: Optional[str] = None,
+    ) -> str:
         ...

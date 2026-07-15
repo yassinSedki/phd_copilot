@@ -11,11 +11,16 @@ from typing import Any, Optional
 
 from shared.llm.base import LLMClient, Message
 from shared.llm.types import (
+    DraftedDocument,
     DraftedLetter,
     EmailBody,
     ExtractedListing,
+    ExtractedProfile,
     OutreachDraft,
     ParsedListing,
+    ReferenceEmailDraft,
+    RefinedDocument,
+    RefinedEmail,
     RefinedLetter,
     ResearchSummary,
     ScoreResult,
@@ -209,14 +214,16 @@ class StubLLMClient(LLMClient):
         profile: dict[str, Any],
         research: ResearchSummary,
         *,
+        personal_note: Optional[str] = None,
         model: Optional[str] = None,
     ) -> OutreachDraft:
         full_name = (profile.get("full_name") or "[Your name]").strip()
         interests = (profile.get("interests") or "your area of research").strip()
         subject = "Prospective PhD enquiry: research overlap and possible collaboration"
+        opener = f"{personal_note.strip()} " if personal_note else ""
         body = (
             "Dear Professor,\n\n"
-            f"I came across your group's recent work and was struck by "
+            f"{opener}I came across your group's recent work and was struck by "
             f"{research.recent_work[0] if research.recent_work else 'your recent publications'}. "
             f"My own background centres on {interests}, which connects to "
             f"{research.overlaps[0] if research.overlaps else 'your line of research'}.\n\n"
@@ -331,3 +338,222 @@ class StubLLMClient(LLMClient):
                 )
             )
         return results
+
+    def extract_listing_detail(
+        self,
+        hint: ExtractedListing,
+        detail_text: str,
+        source_url: str,
+        *,
+        model: Optional[str] = None,
+    ) -> ExtractedListing:
+        """Deterministic stub: same 'key: value' block regex as
+        extract_listings_from_html, but only ever overrides a hint field
+        when it actually finds something — never fabricates a title."""
+
+        def find(pattern: str) -> Optional[str]:
+            return self._re(pattern, detail_text)
+
+        return ExtractedListing(
+            title=hint.title,
+            institution=find(r"institution:\s*(.+)") or hint.institution,
+            country=find(r"country:\s*(.+)") or hint.country,
+            city=find(r"city:\s*(.+)") or hint.city,
+            research_field=find(r"field:\s*(.+)") or hint.research_field,
+            offer_type=find(r"offer[_ ]type:\s*(.+)") or hint.offer_type,
+            funding_info=find(r"funding:\s*(.+)") or hint.funding_info,
+            deadline_text=find(r"deadline:\s*(.+)") or hint.deadline_text,
+            contact_email=find(r"contact[_ ]email:\s*([\w.+-]+@[\w.-]+)") or hint.contact_email,
+            application_url=hint.application_url or source_url,
+            description=hint.description or detail_text[:1500],
+            required_docs=(
+                [d.strip() for d in (find(r"required[_ ]docs:\s*(.+)") or "").split(",") if d.strip()]
+                or hint.required_docs
+            ),
+            source_key=hint.source_key,
+        )
+
+    def extract_profile_from_cv(
+        self,
+        cv_text: str,
+        *,
+        model: Optional[str] = None,
+    ) -> ExtractedProfile:
+        """Deterministic stub: regex a few obvious lines, otherwise leave
+        fields empty so the review step renders with an empty (but valid)
+        form rather than fabricated data."""
+
+        name = self._re(r"^\s*([A-Z][a-zA-Z.'-]+(?:\s+[A-Z][a-zA-Z.'-]+){1,3})\s*$", cv_text, re.MULTILINE)
+        degree = self._re(r"(?:degree|b\.?sc|m\.?sc|phd)\s+in\s+([A-Za-z ]+)", cv_text)
+        year = self._re(r"\b((?:19|20)\d{2})\b", cv_text)
+        email = self._re(r"([\w.+-]+@[\w-]+\.[\w.-]+)", cv_text)
+        phone = self._re(r"(\+?\d[\d .()-]{7,}\d)", cv_text)
+
+        return ExtractedProfile(
+            full_name=name,
+            email=email,
+            phone=phone,
+            research_areas=[],
+            methods=[],
+            programming_languages=[],
+            degree_subject=degree,
+            graduation_year=int(year) if year and year.isdigit() else None,
+            career_stage=None,
+            languages_spoken=[],
+            publications=[],
+            geographic_hints=[],
+        )
+
+    def draft_document(
+        self,
+        profile: dict[str, Any],
+        listing: dict[str, Any],
+        template: str,
+        doc_type: str,
+        red_flags: list[str],
+        *,
+        model: Optional[str] = None,
+    ) -> DraftedDocument:
+        full_name = (profile.get("full_name") or "Applicant").strip()
+        interests = (profile.get("interests") or "the role's research area").strip()
+        summary = (profile.get("research_summary") or profile.get("cv_text") or "my research work").strip()
+
+        rendered = (
+            template.replace("{{full_name}}", full_name)
+            .replace("{{position_title}}", listing.get("title") or "the open position")
+            .replace("{{institution}}", listing.get("institution") or "your institution")
+            .replace("{{city}}", listing.get("city") or "")
+            .replace("{{country}}", listing.get("country") or "")
+            .replace("{{research_field}}", listing.get("research_field") or "the research area")
+            .replace("{{interests}}", interests)
+            .replace("{{research_summary}}", summary[:1500])
+        )
+        warnings = [f"Stub warning: check that your background covers {red_flags[0]}"] if red_flags else []
+        return DraftedDocument(
+            body_markdown=rendered,
+            author_notes=f"Stubbed {doc_type} draft — switch LLM__PROVIDER for a real one.",
+            warnings=warnings,
+            model_used=model or self._model,
+        )
+
+    def refine_document(
+        self,
+        doc_type: str,
+        current_body: str,
+        chat_history: list[Message],
+        user_message: str,
+        *,
+        profile: dict[str, Any],
+        listing: dict[str, Any],
+        model: Optional[str] = None,
+    ) -> RefinedDocument:
+        msg = user_message.lower()
+        body = current_body
+        reply = "Applied a stubbed refinement."
+        if "concise" in msg or "shorter" in msg:
+            lines = [ln for ln in body.splitlines() if ln.strip()]
+            body = "\n".join(lines[: max(6, len(lines) // 2)])
+            reply = "Trimmed to roughly half length."
+        elif user_message.strip():
+            body = body + f"\n\n_Edit: {user_message.strip()}_\n"
+            reply = "Appended your instruction as a note."
+        return RefinedDocument(body_markdown=body, assistant_reply=reply, model_used=model or self._model)
+
+    def refine_email(
+        self,
+        kind: str,
+        current_subject: str,
+        current_body: str,
+        chat_history: list[Message],
+        user_message: str,
+        *,
+        context: dict[str, Any],
+        model: Optional[str] = None,
+    ) -> RefinedEmail:
+        msg = user_message.lower()
+        subject = current_subject
+        body = current_body
+        reply = "Applied a stubbed revision."
+        if "concise" in msg or "shorter" in msg:
+            lines = [ln for ln in body.splitlines() if ln.strip()]
+            body = "\n".join(lines[: max(3, len(lines) // 2)])
+            reply = "Trimmed to roughly half length."
+        elif "subject" in msg:
+            subject = user_message.strip()
+            reply = "Updated the subject line."
+        elif user_message.strip():
+            body = body + f"\n\n_Edit: {user_message.strip()}_\n"
+            reply = "Appended your instruction as a note."
+        return RefinedEmail(subject=subject, body=body, assistant_reply=reply, model_used=model or self._model)
+
+    def draft_reference_request(
+        self,
+        referee: dict[str, Any],
+        student: dict[str, Any],
+        position: dict[str, Any],
+        deadline: Optional[str],
+        submission_method: str,
+        personal_note: Optional[str],
+        *,
+        model: Optional[str] = None,
+    ) -> ReferenceEmailDraft:
+        referee_name = referee.get("name") or "Professor"
+        position_title = position.get("title") or "the position"
+        institution = position.get("institution") or "the institution"
+        student_name = student.get("full_name") or "[Your name]"
+        note = f" {personal_note.strip()}" if personal_note else ""
+        subject = f"Reference letter request — {position_title} at {institution}" + (
+            f", deadline {deadline}" if deadline else ""
+        )
+        body = (
+            f"Dear {referee_name},\n\n"
+            f"I am writing to ask if you would be willing to provide a reference letter for my application "
+            f"to {position_title} at {institution}.\n\n"
+            f"The position is a strong match for my background, and I believe your perspective would "
+            f"speak well to my readiness for it.{note}\n\n"
+            f"If you're able to help, the letter would be submitted via {submission_method}. "
+            f"I'm happy to send any supporting materials.\n\n"
+            f"With thanks,\n{student_name}\n"
+        )
+        return ReferenceEmailDraft(subject=subject, body=body, model_used=model or self._model)
+
+    def draft_reference_followup(
+        self,
+        referee: dict[str, Any],
+        position: dict[str, Any],
+        sent_at: Optional[str],
+        due_at: Optional[str],
+        *,
+        model: Optional[str] = None,
+    ) -> ReferenceEmailDraft:
+        referee_name = referee.get("name") or "Professor"
+        position_title = position.get("title") or "the position"
+        subject = f"Following up — reference letter for {position_title}"
+        body = (
+            f"Dear {referee_name},\n\n"
+            f"Just following up on my request from {sent_at or 'earlier'} regarding a reference letter "
+            f"for {position_title}. No pressure at all — just wanted to check in given the deadline "
+            f"({due_at or 'soon'}).\n\n"
+            "Thank you again for considering it.\n"
+        )
+        return ReferenceEmailDraft(subject=subject, body=body, model_used=model or self._model)
+
+    def explain_fit(
+        self,
+        profile: dict[str, Any],
+        listing: dict[str, Any],
+        breakdown: dict[str, Any],
+        reasons: str,
+        red_flags: list[str],
+        *,
+        model: Optional[str] = None,
+    ) -> str:
+        title = listing.get("title") or "this position"
+        institution = listing.get("institution") or "the institution"
+        interests = (profile.get("interests") or "your research interests").strip()
+        parts = [f"This is a stubbed fit summary for {title} at {institution}, matched against {interests}."]
+        if red_flags:
+            parts.append(f"Flagged concern: {red_flags[0]}")
+        if reasons:
+            parts.append(reasons)
+        return " ".join(parts)

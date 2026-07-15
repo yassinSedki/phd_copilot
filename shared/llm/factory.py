@@ -9,10 +9,13 @@ that subclasses `LLMClient`, then add one row to `_PROVIDER_REGISTRY`.
 from __future__ import annotations
 
 import importlib
+import logging
 from typing import Any
 
 from shared.llm.base import LLMClient
 from shared.llm.errors import LLMError, LLMErrorCode
+
+log = logging.getLogger("phd_copilot.llm")
 
 # (module path, class name) — both lazy-loaded.
 _PROVIDER_REGISTRY: dict[str, tuple[str, str]] = {
@@ -34,6 +37,12 @@ def _role_model(settings: Any, role: str) -> str:
     default = getattr(settings, "default_model", "claude-sonnet-4-6")
     role_models: dict[str, str] = getattr(settings, "role_models", {}) or {}
     return role_models.get(role, default)
+
+
+def _role_max_tokens(settings: Any, role: str) -> int:
+    default = int(getattr(settings, "max_tokens", 2048))
+    overrides: dict[str, int] = getattr(settings, "role_max_tokens", {}) or {}
+    return overrides.get(role, default)
 
 
 def get_llm(settings: Any, role: str = "builder") -> LLMClient:
@@ -61,12 +70,26 @@ def get_llm(settings: Any, role: str = "builder") -> LLMClient:
         ) from exc
 
     provider_cls = getattr(module, class_name)
+    model = _role_model(settings, role)
+    max_tokens = _role_max_tokens(settings, role)
+    has_key = bool(getattr(settings, "api_key", ""))
+
+    if provider_name != "stub" and not has_key:
+        log.warning(
+            "get_llm(role=%s): provider=%s but no api_key is set — the provider's own "
+            "auth error will trigger StandardLLMClient's per-call fallback to the stub "
+            "(you'll see '... fell back to stub' warnings from shared.llm.standard)",
+            role,
+            provider_name,
+        )
+    else:
+        log.info("get_llm(role=%s): provider=%s model=%s max_tokens=%s", role, provider_name, model, max_tokens)
 
     return provider_cls(
         api_key=getattr(settings, "api_key", "") or "",
-        model=_role_model(settings, role),
+        model=model,
         temperature=_role_temperature(settings, role),
-        max_tokens=int(getattr(settings, "max_tokens", 2048)),
+        max_tokens=max_tokens,
         timeout=int(getattr(settings, "request_timeout", 60)),
         json_mode=role not in FREE_TEXT_ROLES,
     )

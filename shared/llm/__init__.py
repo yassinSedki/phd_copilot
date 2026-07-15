@@ -13,6 +13,7 @@ from shared.llm.types import (
     DraftedLetter,
     EmailBody,
     ExtractedListing,
+    ExtractedProfile,
     OutreachDraft,
     ParsedListing,
     RefinedLetter,
@@ -35,4 +36,5 @@ __all__ = [
     "OutreachDraft",
     "ResearchSummary",
     "ExtractedListing",
+    "ExtractedProfile",
 ]

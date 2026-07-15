@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from shared.llm.base import Message
 from shared.llm.errors import LLMError, LLMErrorCode
+from shared.llm.retry import acall_with_retry, call_with_retry
 from shared.llm.standard import StandardLLMClient
 
 
@@ -79,15 +80,21 @@ class AnthropicLLMClient(StandardLLMClient):
         return out
 
     def invoke(self, messages: list[Message], *, json_mode: bool = False) -> str:
-        try:
-            result = self._chat.invoke(self._to_langchain(messages))
-            return str(result.content)
-        except Exception as exc:
-            raise _translate_error(exc) from exc
+        def _once() -> str:
+            try:
+                result = self._chat.invoke(self._to_langchain(messages))
+                return str(result.content)
+            except Exception as exc:
+                raise _translate_error(exc) from exc
+
+        return call_with_retry(_once)
 
     async def ainvoke(self, messages: list[Message], *, json_mode: bool = False) -> str:
-        try:
-            result = await self._chat.ainvoke(self._to_langchain(messages))
-            return str(result.content)
-        except Exception as exc:
-            raise _translate_error(exc) from exc
+        async def _once() -> str:
+            try:
+                result = await self._chat.ainvoke(self._to_langchain(messages))
+                return str(result.content)
+            except Exception as exc:
+                raise _translate_error(exc) from exc
+
+        return await acall_with_retry(_once)
