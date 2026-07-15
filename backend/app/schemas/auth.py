@@ -14,8 +14,11 @@ class LoginRequest(BaseModel):
 class TokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
+    is_onboarded: bool = False
 
 
 class MeResponse(BaseModel):
     id: int
     email: EmailStr
+    full_name: str | None = None
+    is_onboarded: bool = False

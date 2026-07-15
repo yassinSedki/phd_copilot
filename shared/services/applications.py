@@ -1,12 +1,15 @@
 from datetime import datetime
 from typing import Optional
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.attributes import flag_modified
 
 from shared.models import Application, Listing
 from shared.models.base import utcnow
 from shared.repositories import applications as app_repo
 from shared.repositories import listings as listing_repo
+from shared.services import checklist as checklist_service
 from shared.services import state_machine as sm
 
 
@@ -18,22 +21,12 @@ class AlreadyTracked(Exception):
     pass
 
 
-def _docs_checklist_from_listing(listing: Listing) -> list[dict]:
-    items: list[dict] = []
-    for doc in listing.required_docs or []:
-        if isinstance(doc, str):
-            items.append({"doc": doc, "ready": False, "path": None})
-        elif isinstance(doc, dict) and "doc" in doc:
-            items.append({"doc": doc["doc"], "ready": bool(doc.get("ready")), "path": doc.get("path")})
-    return items
-
-
 def create_application(
     db: Session,
     *,
     user_id: int,
     listing_id: int,
-    initial_status: str = sm.REVIEWING,
+    initial_status: str = sm.SAVED,
     priority: int = 0,
     notes: Optional[str] = None,
 ) -> Application:
@@ -54,11 +47,17 @@ def create_application(
         status=initial_status,
         priority=priority,
         deadline=listing.deadline,
-        docs_checklist=_docs_checklist_from_listing(listing),
+        docs_checklist=checklist_service.derive_checklist(listing),
         notes=notes,
     )
     db.add(application)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        # Concurrent save raced past the existence check above — the DB
+        # unique constraint is the authority.
+        db.rollback()
+        raise AlreadyTracked(f"application already exists for listing {listing_id}")
     db.refresh(application)
     return application
 
@@ -73,6 +72,7 @@ def update_application(
     notes: Optional[str] = None,
     next_action: Optional[str] = None,
     next_action_date: Optional[datetime] = None,
+    commit: bool = True,
 ) -> Application:
     if status is not None and status != application.status:
         sm.check_transition(application.status, status, docs_checklist=application.docs_checklist)
@@ -91,8 +91,9 @@ def update_application(
     if next_action_date is not None:
         application.next_action_date = next_action_date
 
-    db.commit()
-    db.refresh(application)
+    if commit:
+        db.commit()
+        db.refresh(application)
     return application
 
 
@@ -103,16 +104,36 @@ def update_docs(db: Session, *, application: Application, items: list[dict]) -> 
     return application
 
 
-def expire_overdue(db: Session, user_id: int) -> int:
-    """Mark applications past deadline (and not yet APPLIED) as EXPIRED."""
-    now = utcnow()
-    count = 0
-    for app in app_repo.list_for_user(db, user_id):
-        if app.deadline and app.deadline < now and app.status not in {
-            sm.APPLIED, sm.INTERVIEW, sm.OFFER, sm.REJECTED, sm.WITHDRAWN, sm.EXPIRED,
-        }:
-            app.status = sm.EXPIRED
-            count += 1
-    if count:
-        db.commit()
-    return count
+class ChecklistItemNotFound(Exception):
+    pass
+
+
+def update_docs_item(db: Session, *, application: Application, item_id: str, fields: dict) -> Application:
+    items = list(application.docs_checklist or [])
+    for item in items:
+        if item.get("id") == item_id:
+            item.update(fields)
+            break
+    else:
+        raise ChecklistItemNotFound(f"checklist item {item_id!r} not found")
+    application.docs_checklist = items
+    # `item.update(fields)` mutated the SAME dict objects `items` shares with
+    # the column's current value, so by the time SQLAlchemy compares old vs.
+    # new value at flush it sees no difference and silently skips the
+    # UPDATE — the API call succeeds (200) but nothing is ever persisted.
+    # flag_modified forces the column into the UPDATE regardless.
+    flag_modified(application, "docs_checklist")
+    db.commit()
+    db.refresh(application)
+    return application
+
+
+def regenerate_checklist(db: Session, *, application: Application, listing: Listing) -> Application:
+    application.docs_checklist = checklist_service.regenerate_preserving_ready(
+        listing, application.docs_checklist
+    )
+    db.commit()
+    db.refresh(application)
+    return application
+
+

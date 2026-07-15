@@ -20,6 +20,7 @@ dependencies = [
     # Auth
     "pyjwt>=2.10,<3.0",
     "bcrypt>=4.2,<5.0",
+    "cryptography>=43.0,<44.0",
 
     # Config + validation
     "pydantic[email]>=2.10,<3.0",
@@ -40,14 +41,19 @@ dependencies = [
     "langchain-anthropic>=0.3,<0.4",
     "langgraph>=0.2,<0.3",
     "cohere>=5.11,<6.0",
-
-    # Scheduling
-    "apscheduler>=3.10,<4.0",
 ]
 
 [project.optional-dependencies]
 # `poetry install --extras playwright` adds Chromium scrape fallback.
 playwright = ["playwright>=1.49,<2.0"]
+# `poetry install --extras pdf` adds document PDF export (Phase 10).
+# fpdf2 is pure-Python (no Cairo/Pango/GTK native libraries required) so it
+# installs and runs identically on Windows/Mac/Linux via pip alone — the
+# previous WeasyPrint dependency needed a system GTK runtime that pip can't
+# install, which made PDF export silently unusable on plain Windows dev
+# setups. Still lazy-imported in documents.py so the app runs fine without
+# it; the PDF endpoint just 503s until installed.
+pdf = ["fpdf2>=2.8,<3.0"]
 
 [tool.poetry]
 packages = [

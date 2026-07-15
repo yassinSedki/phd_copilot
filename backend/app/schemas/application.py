@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any, Literal, Optional, Union
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -22,13 +22,29 @@ class ApplicationUpdate(BaseModel):
 
 
 class DocsChecklistItem(BaseModel):
-    doc: str
+    """One checklist entry. `kind` drives the frontend's action button —
+    document | manual | reference | portal (Phase 09)."""
+
+    id: str
+    kind: Literal["document", "manual", "reference", "portal"] = "manual"
+    label: str
     ready: bool = False
-    path: Optional[str] = None
+    doc_type: Optional[str] = None  # kind="document": cover_letter | sop | research_proposal
+    url: Optional[str] = None  # kind="portal"
+    referee_id: Optional[int] = None  # kind="reference"
+    reference_request_id: Optional[int] = None  # kind="reference"
 
 
 class DocsChecklistUpdate(BaseModel):
     items: list[DocsChecklistItem] = Field(default_factory=list)
+
+
+class DocsChecklistItemUpdate(BaseModel):
+    """Partial update for PATCH /applications/:id/docs/:item_id."""
+
+    ready: Optional[bool] = None
+    referee_id: Optional[int] = None
+    reference_request_id: Optional[int] = None
 
 
 class ApplicationRead(BaseModel):
@@ -49,5 +65,52 @@ class ApplicationRead(BaseModel):
     listing: ListingSummary
 
 
-class KanbanBoard(BaseModel):
-    columns: dict[str, list[ApplicationRead]]
+class ReferenceCounts(BaseModel):
+    requested: int
+    required: int
+
+
+class ApplicationRow(BaseModel):
+    """Row shape for the /tracker table (Phase 08)."""
+
+    id: int
+    title: Optional[str] = None
+    institution: Optional[str] = None
+    supervisor_name: Optional[str] = None
+    deadline: Optional[datetime] = None
+    status: str
+    priority: int
+    cover_letter_status: Optional[str] = None  # draft | refined | done | null
+    sop_status: Optional[str] = None  # never populated today — no SOP flow yet
+    references: ReferenceCounts
+    readiness_score: int
+    notes_preview: Optional[str] = None
+
+
+class ApplicationListResponse(BaseModel):
+    items: list[ApplicationRow]
+    total: int
+
+
+class BulkSetStatusAction(BaseModel):
+    ids: list[int]
+    action: Literal["set_status"]
+    status: str
+
+
+class BulkArchiveAction(BaseModel):
+    ids: list[int]
+    action: Literal["archive"]
+
+
+class BulkResultItem(BaseModel):
+    id: int
+    ok: bool
+    error: Optional[str] = None
+
+
+class BulkActionResponse(BaseModel):
+    results: list[BulkResultItem]
+
+
+BulkActionRequest = Union[BulkSetStatusAction, BulkArchiveAction]

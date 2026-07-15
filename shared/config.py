@@ -54,7 +54,6 @@ class LLMSettings(BaseModel):
             "builder": "command-a-03-2025",
             "summarizer": "command-r-08-2024",
             "scorer": "command-r-08-2024",
-            "scorer_strong": "command-a-03-2025",
             "drafter": "command-a-03-2025",
             "refiner": "command-a-03-2025",
             "extractor": "command-a-03-2025",
@@ -63,16 +62,36 @@ class LLMSettings(BaseModel):
         }
     )
 
+    # Per-role token budget override. `extractor` returns one full JSON
+    # object per listing on the page — a page with many listings can blow
+    # past the global default and get cut off mid-JSON (unparseable, silent
+    # fallback to the stub). Give it more headroom than the default.
+    role_max_tokens: dict[str, int] = Field(default_factory=lambda: {"extractor": 8192})
+
     temperature_classifier: float = 0.0
     temperature_builder: float = 0.1
     temperature_summarizer: float = 0.3
     temperature_scorer: float = 0.0
-    temperature_scorer_strong: float = 0.1
     temperature_drafter: float = 0.3
     temperature_refiner: float = 0.3
     temperature_extractor: float = 0.0
     temperature_researcher: float = 0.2
     temperature_generator: float = 0.3
+
+
+class SMTPSettings(BaseModel):
+    """Outbound email for reference-request / supervisor-outreach "Send"
+    (replaces the removed Gmail-OAuth send path). One shared relay account
+    for every user — the recipient's Reply-To is set to the user's own
+    contact email so replies land in their inbox even though the message
+    was relayed through this account. Read by `app.services.mailer`."""
+
+    host: str = ""
+    port: int = 587
+    username: str = ""
+    password: str = ""
+    from_email: str = ""
+    use_tls: bool = True
 
 
 class Settings(BaseSettings):
@@ -98,7 +117,7 @@ class Settings(BaseSettings):
 
     # ---- pipeline thresholds
 
-    default_score_threshold: int = 70
+    default_score_threshold: int = 60
     low_score_threshold: int = 40
 
     # ---- scraper agent
@@ -112,12 +131,14 @@ class Settings(BaseSettings):
 
     llm: LLMSettings = Field(default_factory=LLMSettings)
     embedding: EmbeddingSettings = Field(default_factory=EmbeddingSettings)
+    smtp: SMTPSettings = Field(default_factory=SMTPSettings)
 
     # ---- back-compat env vars (single-key convention)
 
     anthropic_api_key: str = ""
     cohere_api_key: str = ""
     llm_provider: str = ""
+    frontend_base_url: str = ""
 
     @model_validator(mode="after")
     def _propagate_keys(self) -> "Settings":
