@@ -5,6 +5,12 @@ A walkthrough of what's in this repo, how the pieces fit, and what happens when 
 - [phd copilot.md](../phd%20copilot.md) — the product/architecture spec.
 - [ingest_and_llm_factory_guide.md](../ingest_and_llm_factory_guide.md) — the patterns that drive the LLM / ingest layer.
 
+> **Roadmap Phases 01–13** (`architecture/roadmap/`) shipped since this walkthrough was written — see
+> `architecture/roadmap/NOTES.md` for the authoritative list of what changed. Highlights: Kanban → tables (tracker +
+> opportunities), single-tier scoring + constraint pre-filter (no more cheap-then-strong rescorer), generic
+> `documents` model → `document_versions`, Google OAuth + CV onboarding, reference-letter requests, deep-research
+> refresh. Any walkthrough step below describing those old behaviors is superseded.
+
 ---
 
 ## 1. The shape

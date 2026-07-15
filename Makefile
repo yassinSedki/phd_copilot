@@ -40,8 +40,11 @@ install:
 
 dev: backend
 
+# WATCHFILES_FORCE_POLLING: inotify events never reach WSL for files on
+# /mnt/* (Windows-mounted drives), so the watcher must poll or edits made
+# from Windows never trigger a reload. Harmless on native filesystems.
 backend:
-	$(POETRY) run uvicorn app.main:app \
+	WATCHFILES_FORCE_POLLING=true $(POETRY) run uvicorn app.main:app \
 		--host $(HOST) --port $(PORT) \
 		--reload --reload-dir backend --reload-dir worker --reload-dir shared
 

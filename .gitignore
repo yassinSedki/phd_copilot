@@ -1,20 +1,76 @@
+# ---- Python ---------------------------------------------------------------
 __pycache__/
 *.py[cod]
+*$py.class
 *.egg-info/
+*.egg
+.eggs/
 .venv/
 venv/
+env/
+.Python
+pip-wheel-metadata/
+
+# ---- Env / secrets ----------------------------------------------------------
 .env
+.env.*
+!.env.example
+
+# ---- Databases (local dev only — Postgres is the real target) -------------
 *.db
 *.db-journal
 *.db-wal
 *.db-shm
+local.db
+
+# ---- Test / lint / type-check caches ---------------------------------------
 .mypy_cache/
 .pytest_cache/
-.idea/
-.vscode/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+.tox/
+
+# ---- Storage (uploaded CVs, raw scraped HTML, generated PDFs) -------------
+storage/
+
+# ---- Node / frontend --------------------------------------------------------
 node_modules/
 dist/
 build/
+frontend/dist/
+frontend/build/
+.vite/
+*.tsbuildinfo
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.eslintcache
+
+# ---- Playwright --------------------------------------------------------------
+test-results/
+playwright-report/
+playwright/.cache/
+
+# ---- Editors / IDE -----------------------------------------------------------
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# ---- OS ------------------------------------------------------------------
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ---- Logs -----------------------------------------------------------------
+*.log
+logs/
+
+# ---- Repo-specific working docs (not part of the shipped product) ---------
 architecture/
-storage/
 implimentation/
