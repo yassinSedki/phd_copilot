@@ -1,17 +1,15 @@
 import { Navigate, Route, Routes } from "react-router-dom";
-
-import Layout from "@/components/Layout";
 import ProtectedRoute from "@/components/ProtectedRoute";
+import Shell from "@/components/layout/Shell";
 import Login from "@/pages/Login";
 import Register from "@/pages/Register";
-import OnboardingProfile from "@/pages/OnboardingProfile";
+import Onboarding from "@/pages/Onboarding";
 import Dashboard from "@/pages/Dashboard";
 import Opportunities from "@/pages/Opportunities";
-import OpportunityDetail from "@/pages/OpportunityDetail";
-import Tracker from "@/pages/Tracker";
+import Applications from "@/pages/Applications";
 import ApplicationDetail from "@/pages/ApplicationDetail";
-import LetterEditor from "@/pages/LetterEditor";
-import DeepDive from "@/pages/DeepDive";
+import Documents from "@/pages/Documents";
+import Supervisors from "@/pages/Supervisors";
 import Settings from "@/pages/Settings";
 
 export default function App() {
@@ -20,22 +18,23 @@ export default function App() {
       <Route path="/login" element={<Login />} />
       <Route path="/register" element={<Register />} />
 
+      <Route element={<ProtectedRoute requireOnboarded={false} />}>
+        <Route path="/onboarding" element={<Onboarding />} />
+      </Route>
+
       <Route element={<ProtectedRoute />}>
-        <Route element={<Layout />}>
-          <Route path="/onboarding/profile" element={<OnboardingProfile />} />
+        <Route element={<Shell />}>
           <Route path="/dashboard" element={<Dashboard />} />
           <Route path="/opportunities" element={<Opportunities />} />
-          <Route path="/opportunities/:id" element={<OpportunityDetail />} />
-          <Route path="/tracker" element={<Tracker />} />
-          <Route path="/tracker/:id" element={<ApplicationDetail />} />
-          <Route path="/tracker/:id/letter" element={<LetterEditor />} />
-          <Route path="/deepdive" element={<DeepDive />} />
-          <Route path="/deepdive/:outreachId" element={<DeepDive />} />
+          <Route path="/applications" element={<Applications />} />
+          <Route path="/applications/:id" element={<ApplicationDetail />} />
+          <Route path="/documents" element={<Documents />} />
+          <Route path="/supervisors" element={<Supervisors />} />
           <Route path="/settings" element={<Settings />} />
-          <Route path="/" element={<Navigate to="/dashboard" replace />} />
         </Route>
       </Route>
 
+      <Route path="/" element={<Navigate to="/dashboard" replace />} />
       <Route path="*" element={<Navigate to="/dashboard" replace />} />
     </Routes>
   );

@@ -10,7 +10,8 @@ export function useJobProgress(jobId: number | null) {
     refetchInterval: (q) => {
       const data = q.state.data;
       if (!data) return 800;
-      return data.status === "done" || data.status === "failed" ? false : 800;
+      const terminal = ["done", "failed", "cancelled", "awaiting_continue"];
+      return terminal.includes(data.status) ? false : 800;
     },
   });
 }
