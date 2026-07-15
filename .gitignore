@@ -74,3 +74,4 @@ logs/
 # ---- Repo-specific working docs (not part of the shipped product) ---------
 architecture/
 implimentation/
+HOW_IT_WORKS.md

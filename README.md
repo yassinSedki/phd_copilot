@@ -10,6 +10,8 @@
 [![LangGraph](https://img.shields.io/badge/LangGraph-agents-1C3C3C)](https://www.langchain.com/langgraph)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-database-4169E1?logo=postgresql&logoColor=white)](https://www.postgresql.org/)
 
+[**Watch the demo video**](https://docs.google.com/videos/d/1UKLYG_q6JOXv9U5fjIICR47r2X_nRNA4jue9ktYA7QA/play?usp=sharing)
+
 </div>
 
 ---
