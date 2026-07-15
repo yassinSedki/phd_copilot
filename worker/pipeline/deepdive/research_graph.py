@@ -22,19 +22,20 @@ langgraph isn't installed. Public entry point:
 
 from __future__ import annotations
 
-import json
+import asyncio
 import logging
 import re
-from typing import Any, Optional
-from urllib.parse import urljoin
+from typing import Any, Callable, Optional
 
 from shared.llm import LLMClient, ResearchSummary
+from shared.llm.jsonx import extract_json_object
 from shared.llm.prompts import (
     extract_research_info as extract_prompt,
     find_lab_url as lab_url_prompt,
     find_publications as pubs_prompt,
     identify_overlap as overlap_prompt,
 )
+from worker.pipeline.ingest.scraper_graph import fetch_and_strip_page
 
 log = logging.getLogger("phd_copilot.deepdive")
 
@@ -44,17 +45,16 @@ MAX_QUALITY_RETRIES = 2
 # ----------------------------- nodes -----------------------------------
 
 
-def _strip_html(html: str) -> str:
-    try:
-        from bs4 import BeautifulSoup  # lazy
-
-        soup = BeautifulSoup(html, "html.parser")
-        for tag in soup(["script", "style", "noscript", "svg"]):
-            tag.decompose()
-        return soup.get_text("\n", strip=True)
-    except ImportError:
-        text = re.sub(r"<script[\s\S]*?</script>", " ", html, flags=re.IGNORECASE)
-        return re.sub(r"<[^>]+>", " ", text)
+async def _invoke_json(llm: LLMClient, system: str, user: str) -> dict[str, Any]:
+    """One helper for every node: blocking provider call off the event loop,
+    fenced/chatty output handled by the shared parser (bare json.loads used
+    to silently turn ```json replies into {} → generic emails)."""
+    out = await asyncio.to_thread(
+        llm.invoke,
+        [{"role": "system", "content": system}, {"role": "user", "content": user}],
+        json_mode=True,
+    )
+    return extract_json_object(out)
 
 
 async def find_lab_url(state: dict[str, Any], *, llm: LLMClient) -> dict[str, Any]:
@@ -65,65 +65,64 @@ async def find_lab_url(state: dict[str, Any], *, llm: LLMClient) -> dict[str, An
     if state.get("lab_url"):
         return state
     try:
-        out = llm.invoke(
-            [
-                {"role": "system", "content": lab_url_prompt.SYSTEM},
-                {"role": "user", "content": lab_url_prompt.build_user(state["professor_name"], state.get("institution"))},
-            ],
-            json_mode=True,
+        data = await _invoke_json(
+            llm, lab_url_prompt.SYSTEM, lab_url_prompt.build_user(state["professor_name"], state.get("institution"))
         )
-        try:
-            data = json.loads(out)
-        except json.JSONDecodeError:
-            data = {}
         return {**state, "lab_url": data.get("lab_url")}
     except Exception as exc:
         log.warning("find_lab_url failed: %s", exc)
         return {**state, "lab_url": None}
 
 
+def _page_mentions_professor(text: str, professor_name: str) -> bool:
+    """The lab URL comes from LLM memory and can be hallucinated or stale —
+    a page that never mentions the professor's surname is almost certainly
+    the wrong page, and researching it would produce an email about someone
+    else's lab. Surname check: cheap, language-agnostic enough."""
+    words = [w.strip(".,") for w in professor_name.split() if len(w.strip(".,")) >= 3]
+    if not words:
+        return True  # nothing to verify against — don't block
+    surname = words[-1].lower()
+    return surname in text.lower()
+
+
 async def fetch_lab_page(state: dict[str, Any], *, user_agent: str) -> dict[str, Any]:
+    """Reuses the scraper's fetch (incl. the Playwright JS-shell fallback the
+    old hand-rolled httpx fetch here lacked) and stores stripped text once.
+    A fetched page that doesn't mention the professor is DISCARDED — wrong
+    input is worse than no input here."""
     url = state.get("lab_url")
     if not url:
-        return {**state, "lab_html": ""}
+        return {**state, "lab_text": ""}
     try:
-        import httpx  # lazy
-
-        async with httpx.AsyncClient(
-            follow_redirects=True, timeout=15.0, headers={"User-Agent": user_agent}
-        ) as client:
-            resp = await client.get(url)
-            resp.raise_for_status()
-            return {**state, "lab_html": resp.text}
+        text = await fetch_and_strip_page(url, user_agent=user_agent)
     except Exception as exc:
         log.warning("fetch_lab_page failed: %s", exc)
-        return {**state, "lab_html": ""}
+        return {**state, "lab_text": ""}
+
+    # Only verify LLM-guessed URLs; a URL the user typed is trusted as-is.
+    if text and not state.get("lab_url_from_user") and not _page_mentions_professor(text, state["professor_name"]):
+        log.warning(
+            "fetch_lab_page: %s never mentions %r — likely a hallucinated/stale URL, discarding",
+            url, state["professor_name"],
+        )
+        return {**state, "lab_text": "", "lab_url": None}
+    return {**state, "lab_text": text}
 
 
 async def extract_research_info(state: dict[str, Any], *, llm: LLMClient) -> dict[str, Any]:
-    page_text = _strip_html(state.get("lab_html") or "")[:8000]
+    page_text = (state.get("lab_text") or "")[:8000]
     if not page_text:
-        # Fall back to a topic-only summary.
-        summary = llm.research_lab(
-            state["professor_name"], state.get("institution"), state.get("topic")
-        )
-        return {
-            **state,
-            "research_topics": [summary.summary],
-            "summary_text": summary.summary,
-        }
+        # HONEST fallback: no verified page means no research. The old path
+        # called llm.research_lab here, which returned canned stub text that
+        # then flowed into the stored summary and the email as if it were
+        # real. Empty is recoverable; fabricated is not.
+        log.info("extract_research_info: no lab page — proceeding without research context")
+        return {**state, "research_topics": [], "summary_text": ""}
     try:
-        out = llm.invoke(
-            [
-                {"role": "system", "content": extract_prompt.SYSTEM},
-                {"role": "user", "content": extract_prompt.build_user(state["professor_name"], page_text)},
-            ],
-            json_mode=True,
+        data = await _invoke_json(
+            llm, extract_prompt.SYSTEM, extract_prompt.build_user(state["professor_name"], page_text)
         )
-        try:
-            data = json.loads(out)
-        except json.JSONDecodeError:
-            data = {}
     except Exception as exc:
         log.warning("extract_research_info failed: %s", exc)
         data = {}
@@ -135,7 +134,7 @@ async def find_publications(state: dict[str, Any], *, llm: LLMClient) -> dict[st
     """Pull 2-3 recent paper titles from the lab page text + LLM. Production
     swaps this for a Semantic Scholar / OpenAlex API call.
     """
-    text = _strip_html(state.get("lab_html") or "")
+    text = state.get("lab_text") or ""
     # Cheap heuristic: lines that look like paper titles (Title Case + year).
     candidates = []
     for line in text.splitlines():
@@ -149,17 +148,7 @@ async def find_publications(state: dict[str, Any], *, llm: LLMClient) -> dict[st
         return {**state, "publications": []}
 
     try:
-        out = llm.invoke(
-            [
-                {"role": "system", "content": pubs_prompt.SYSTEM},
-                {"role": "user", "content": pubs_prompt.build_user(candidates)},
-            ],
-            json_mode=True,
-        )
-        try:
-            data = json.loads(out)
-        except json.JSONDecodeError:
-            data = {}
+        data = await _invoke_json(llm, pubs_prompt.SYSTEM, pubs_prompt.build_user(candidates))
         pubs = [str(p) for p in (data.get("publications") or [])][:3]
     except Exception:
         pubs = candidates[:3]
@@ -177,25 +166,17 @@ async def identify_overlap(state: dict[str, Any], *, llm: LLMClient) -> dict[str
     overlap points referencing the prof's actual topics / publications."""
     profile = state.get("user_profile") or {}
     try:
-        out = llm.invoke(
-            [
-                {"role": "system", "content": overlap_prompt.SYSTEM},
-                {
-                    "role": "user",
-                    "content": overlap_prompt.build_user(
-                        state["professor_name"],
-                        state.get("research_topics") or [],
-                        state.get("publications") or [],
-                        profile,
-                    ),
-                },
-            ],
-            json_mode=True,
+        data = await _invoke_json(
+            llm,
+            overlap_prompt.SYSTEM,
+            overlap_prompt.build_user(
+                state["professor_name"],
+                state.get("research_topics") or [],
+                state.get("publications") or [],
+                profile,
+                state.get("personal_note"),
+            ),
         )
-        try:
-            data = json.loads(out)
-        except json.JSONDecodeError:
-            data = {}
         overlaps = [str(o) for o in (data.get("overlaps") or [])][:3]
     except Exception as exc:
         log.warning("identify_overlap failed: %s", exc)
@@ -214,9 +195,36 @@ def _build_research_summary(state: dict[str, Any]) -> ResearchSummary:
     )
 
 
-def draft_email(state: dict[str, Any], *, llm: LLMClient) -> dict[str, Any]:
+async def draft_email(state: dict[str, Any], *, llm: LLMClient) -> dict[str, Any]:
     summary = _build_research_summary(state)
-    draft = llm.draft_outreach_email(state.get("user_profile") or {}, summary)
+
+    # Retrying with IDENTICAL inputs at low temperature reproduces the same
+    # generic draft — when the quality gate sent us back here, tell the
+    # model what was wrong and what to cite.
+    note = state.get("personal_note") or ""
+    if state.get("quality") == "generic":
+        citables = (state.get("publications") or []) + (state.get("overlap_points") or [])
+        if citables:
+            note = (
+                (note + "\n\n" if note else "")
+                + "REVISION: the previous draft was too generic. Explicitly mention at least one of these "
+                + "by name: " + "; ".join(str(c) for c in citables[:4])
+            )
+        else:
+            # Nothing real to cite — the previous attempt likely fabricated
+            # a bracketed placeholder trying to comply anyway. Telling it
+            # explicitly there is nothing to cite heads that off next round.
+            note = (
+                (note + "\n\n" if note else "")
+                + "REVISION: the previous draft used a bracketed placeholder instead of a real citation. "
+                + "No specific publication or overlap was found — do not invent one and do not use "
+                + "placeholder brackets. Write a shorter, honest email grounded only in the general "
+                + "research summary."
+            )
+
+    draft = await asyncio.to_thread(
+        llm.draft_outreach_email, state.get("user_profile") or {}, summary, personal_note=note or None
+    )
     return {
         **state,
         "email_subject": draft.subject,
@@ -224,14 +232,24 @@ def draft_email(state: dict[str, Any], *, llm: LLMClient) -> dict[str, Any]:
     }
 
 
+_PLACEHOLDER_RE = re.compile(r"\[[^\]\n]{2,80}\]")
+
+
 def check_quality(state: dict[str, Any]) -> dict[str, Any]:
     """Heuristic: does the draft mention at least one publication title or
-    overlap term? If not, flag as generic and retry."""
-    body = (state.get("email_draft") or "").lower()
+    overlap term, AND is it free of unfilled placeholders? A model asked to
+    "cite something specific" with nothing real to cite will sometimes
+    fabricate a bracketed placeholder like "[paper title]" instead — that
+    passes a naive citation check (it still mentions the topic) but must
+    never reach the user as a final draft, so it's checked independently."""
+    body = state.get("email_draft") or ""
     if not body:
         return {**state, "quality": "generic"}
+    if _PLACEHOLDER_RE.search(body):
+        return {**state, "quality": "generic"}
+    lowered = body.lower()
     needles = [n.lower() for n in (state.get("publications") or []) + (state.get("overlap_points") or [])]
-    found = any(n[:30] in body for n in needles if n)
+    found = any(n[:30] in lowered for n in needles if n)
     return {**state, "quality": "specific" if found else "generic"}
 
 
@@ -246,35 +264,67 @@ def quality_router(state: dict[str, Any]) -> str:
 # ----------------------------- runner ----------------------------------
 
 
-def _build_langgraph(llm: LLMClient, user_agent: str):
+# Human-readable step labels, streamed to the job's progress meta so the UI
+# shows the agent's REAL process instead of a canned animation.
+STEP_LABELS = {
+    "find_lab_url": ("Finding the lab page", 25),
+    "fetch_lab_page": ("Reading the lab page", 35),
+    "extract_research_info": ("Extracting research themes", 50),
+    "find_publications": ("Finding recent publications", 60),
+    "identify_overlap": ("Identifying overlap with your profile", 70),
+    "draft_email": ("Drafting the outreach email", 80),
+    "check_quality": ("Checking the draft cites real work", 88),
+}
+
+StepCallback = Callable[[str, int], None]
+
+
+def _notify(on_step: Optional[StepCallback], node: str) -> None:
+    if on_step is None:
+        return
+    label, pct = STEP_LABELS[node]
+    try:
+        on_step(label, pct)
+    except Exception:  # progress reporting must never kill the research
+        log.debug("on_step callback failed", exc_info=True)
+
+
+def _build_langgraph(llm: LLMClient, user_agent: str, on_step: Optional[StepCallback] = None):
     try:
         from langgraph.graph import END, StateGraph  # lazy
     except ImportError:
         return None
 
     async def _find(s):
+        _notify(on_step, "find_lab_url")
         return await find_lab_url(s, llm=llm)
 
     async def _fetch(s):
+        _notify(on_step, "fetch_lab_page")
         return await fetch_lab_page(s, user_agent=user_agent)
 
     async def _extract(s):
+        _notify(on_step, "extract_research_info")
         return await extract_research_info(s, llm=llm)
 
     async def _pubs(s):
+        _notify(on_step, "find_publications")
         return await find_publications(s, llm=llm)
 
     def _abstracts(s):
         return fetch_abstracts(s)
 
     async def _overlap(s):
+        _notify(on_step, "identify_overlap")
         out = await identify_overlap(s, llm=llm)
         return {**out, "attempts": out.get("attempts", 0) + 1}
 
-    def _draft(s):
-        return draft_email(s, llm=llm)
+    async def _draft(s):
+        _notify(on_step, "draft_email")
+        return await draft_email(s, llm=llm)
 
     def _quality(s):
+        _notify(on_step, "check_quality")
         return check_quality(s)
 
     g = StateGraph(dict)
@@ -299,16 +349,25 @@ def _build_langgraph(llm: LLMClient, user_agent: str):
     return g.compile()
 
 
-async def _run_sequential(initial: dict[str, Any], llm: LLMClient, user_agent: str) -> dict[str, Any]:
+async def _run_sequential(
+    initial: dict[str, Any], llm: LLMClient, user_agent: str, on_step: Optional[StepCallback] = None
+) -> dict[str, Any]:
+    _notify(on_step, "find_lab_url")
     state = await find_lab_url(initial, llm=llm)
+    _notify(on_step, "fetch_lab_page")
     state = await fetch_lab_page(state, user_agent=user_agent)
+    _notify(on_step, "extract_research_info")
     state = await extract_research_info(state, llm=llm)
+    _notify(on_step, "find_publications")
     state = await find_publications(state, llm=llm)
     state = fetch_abstracts(state)
     for _ in range(MAX_QUALITY_RETRIES + 1):
+        _notify(on_step, "identify_overlap")
         state = await identify_overlap(state, llm=llm)
         state["attempts"] = state.get("attempts", 0) + 1
-        state = draft_email(state, llm=llm)
+        _notify(on_step, "draft_email")
+        state = await draft_email(state, llm=llm)
+        _notify(on_step, "check_quality")
         state = check_quality(state)
         if state.get("quality") == "specific":
             break
@@ -324,14 +383,20 @@ async def run_deep_dive_graph(
     user_profile: dict[str, Any],
     llm: LLMClient,
     user_agent: str = "phd-copilot/0.1",
+    personal_note: Optional[str] = None,
+    on_step: Optional[StepCallback] = None,
 ) -> dict[str, Any]:
     initial = {
         "professor_name": professor_name,
         "institution": institution,
         "topic": topic,
         "lab_url": lab_url,
+        # A user-supplied URL is trusted; only LLM-guessed ones get the
+        # mentions-the-professor verification.
+        "lab_url_from_user": bool(lab_url),
         "user_profile": user_profile,
-        "lab_html": "",
+        "personal_note": personal_note,
+        "lab_text": "",
         "research_topics": [],
         "publications": [],
         "overlap_points": [],
@@ -342,7 +407,7 @@ async def run_deep_dive_graph(
         "attempts": 0,
     }
 
-    graph = _build_langgraph(llm, user_agent)
+    graph = _build_langgraph(llm, user_agent, on_step)
     if graph is not None:
         return await graph.ainvoke(initial)
-    return await _run_sequential(initial, llm, user_agent)
+    return await _run_sequential(initial, llm, user_agent, on_step)

@@ -41,6 +41,7 @@ async def _run_async(
     institution: str | None,
     lab_url: str | None,
     topic: str | None,
+    personal_note: str | None = None,
 ) -> None:
     settings = get_settings()
     db: Session = SessionLocal()
@@ -50,6 +51,11 @@ async def _run_async(
         llm = get_llm(settings.llm, role="researcher")
 
         jobs_repo.update_progress(db, job_id, 20)
+
+        def on_step(label: str, pct: int) -> None:
+            # Streamed to the UI: the agent's real process, not an animation.
+            jobs_repo.update_progress(db, job_id, pct, meta={"current_step": label})
+
         final = await run_deep_dive_graph(
             professor_name=professor_name,
             institution=institution,
@@ -58,8 +64,25 @@ async def _run_async(
             user_profile=_profile_payload(profile),
             llm=llm,
             user_agent=settings.scraper_user_agent,
+            personal_note=personal_note,
+            on_step=on_step,
         )
-        jobs_repo.update_progress(db, job_id, 80)
+        jobs_repo.update_progress(db, job_id, 90, meta={"current_step": "Saving the dossier"})
+
+        researched = bool(final.get("research_topics") or final.get("publications"))
+        source_note_lines = (
+            ["Topics:"] + [f"- {x}" for x in final.get("research_topics") or []]
+            + ["", "Publications:"] + [f"- {x}" for x in final.get("publications") or []]
+            + ["", "Overlaps:"] + [f"- {x}" for x in final.get("overlap_points") or []]
+        )
+        if not researched:
+            # Be honest rather than fabricate: no verified lab page was found,
+            # so the draft is based only on the user's own inputs.
+            source_note_lines = [
+                "No lab page could be found or verified for this professor.",
+                "The draft email is based only on your profile and the details you entered.",
+                "Add a lab URL and re-run the research for a cited, specific email.",
+            ]
 
         contact = Contact(
             user_id=user_id,
@@ -68,11 +91,8 @@ async def _run_async(
             lab_url=final.get("lab_url"),
             email=None,  # HARD RULE — never auto-store
             research_summary=final.get("summary_text") or "",
-            source_notes="\n".join(
-                ["Topics:"] + [f"- {x}" for x in final.get("research_topics") or []]
-                + ["", "Publications:"] + [f"- {x}" for x in final.get("publications") or []]
-                + ["", "Overlaps:"] + [f"- {x}" for x in final.get("overlap_points") or []]
-            ),
+            publications=[{"title": p} for p in (final.get("publications") or [])],
+            source_notes="\n".join(source_note_lines),
         )
         db.add(contact)
         db.flush()
@@ -83,7 +103,10 @@ async def _run_async(
             user_id=user_id,
             contact_id=contact.id,
             draft_email=f"Subject: {subject}\n\n{body}",
+            email_subject=subject,
+            email_body=body,
             status="DRAFT",
+            chat_history=[],
         )
         db.add(outreach)
         db.commit()
@@ -108,32 +131,22 @@ def deep_dive(
     institution: str | None = None,
     lab_url: str | None = None,
     topic: str | None = None,
+    personal_note: str | None = None,
 ) -> None:
     """Sync entry for FastAPI BackgroundTasks."""
 
+    kwargs = dict(
+        professor_name=professor_name,
+        institution=institution,
+        lab_url=lab_url,
+        topic=topic,
+        personal_note=personal_note,
+    )
     try:
-        asyncio.run(
-            _run_async(
-                user_id,
-                job_id,
-                professor_name=professor_name,
-                institution=institution,
-                lab_url=lab_url,
-                topic=topic,
-            )
-        )
+        asyncio.run(_run_async(user_id, job_id, **kwargs))
     except RuntimeError:
         loop = asyncio.new_event_loop()
         try:
-            loop.run_until_complete(
-                _run_async(
-                    user_id,
-                    job_id,
-                    professor_name=professor_name,
-                    institution=institution,
-                    lab_url=lab_url,
-                    topic=topic,
-                )
-            )
+            loop.run_until_complete(_run_async(user_id, job_id, **kwargs))
         finally:
             loop.close()
