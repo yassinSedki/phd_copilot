@@ -1,18 +1,15 @@
 """Score step: profile + listing -> Score row.
 
-The cheap LLM (`scorer` role) gets the first pass. Borderline results
-(LOW < s < THRESHOLD) trigger a re-score with the stronger LLM
-(`scorer_strong` role) — the borderline band is exactly where extra
-spend buys real signal.
-
-Architecture: phd copilot.md → "CV-driven scoring".
+Phase 13: one model does all scoring — the cheap-then-strong rescorer was
+removed (borderline-band rescoring wasn't earning its extra spend at this
+scale; explicit constraint pre-filtering, Phase 04, does more of that job
+now). Architecture: phd copilot.md -> "CV-driven scoring".
 """
 
 from typing import Optional
 
 from sqlalchemy.orm import Session
 
-from shared.config import get_settings
 from shared.models import Listing, Profile, Score
 from shared.llm import LLMClient
 
@@ -57,20 +54,27 @@ def score_listing(
     user_id: int,
     profile: Optional[Profile],
     listing: Listing,
-    strong_llm: Optional[LLMClient] = None,
 ) -> Score:
-    settings = get_settings()
-    profile_payload = _profile_to_payload(profile)
-    listing_payload = _listing_to_payload(listing)
+    result = llm.score_listing(_profile_to_payload(profile), _listing_to_payload(listing))
+    return _persist_score(db, user_id, listing, result)
 
-    result = llm.score_listing(profile_payload, listing_payload)
 
-    if (
-        strong_llm is not None
-        and settings.low_score_threshold < result.score < settings.default_score_threshold
-    ):
-        result = strong_llm.score_listing(profile_payload, listing_payload)
+async def score_listing_async(
+    db: Session,
+    llm: LLMClient,
+    *,
+    user_id: int,
+    profile: Optional[Profile],
+    listing: Listing,
+) -> Score:
+    """LLM call off the event loop; Session writes stay on the loop thread."""
+    import asyncio
 
+    result = await asyncio.to_thread(llm.score_listing, _profile_to_payload(profile), _listing_to_payload(listing))
+    return _persist_score(db, user_id, listing, result)
+
+
+def _persist_score(db: Session, user_id: int, listing: Listing, result) -> Score:
     score_row = Score(
         user_id=user_id,
         listing_id=listing.id,

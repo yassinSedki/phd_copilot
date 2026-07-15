@@ -39,7 +39,19 @@ def upsert_listing(db: Session, user_id: int, raw: RawListing, raw_path: str | N
 
 def parse_listing(db: Session, llm: LLMClient, listing: Listing, raw_text: str) -> Listing:
     parsed = llm.parse_listing(raw_text)
+    return apply_parsed(db, listing, parsed)
 
+
+async def parse_listing_async(db: Session, llm: LLMClient, listing: Listing, raw_text: str) -> Listing:
+    """LLM call off the event loop; Session mutations stay on the loop thread
+    (SQLAlchemy sessions are not thread-safe)."""
+    import asyncio
+
+    parsed = await asyncio.to_thread(llm.parse_listing, raw_text)
+    return apply_parsed(db, listing, parsed)
+
+
+def apply_parsed(db: Session, listing: Listing, parsed) -> Listing:
     listing.title = parsed.title
     listing.institution = parsed.institution
     listing.country = parsed.country

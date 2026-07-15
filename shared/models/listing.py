@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Any, Optional
 
-from sqlalchemy import JSON, Boolean, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import JSON, Boolean, DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from shared.models.base import Base, utcnow
@@ -36,12 +36,22 @@ class Listing(Base):
     last_seen: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
     parsed_ok: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
-    scores: Mapped[list["Score"]] = relationship(back_populates="listing", cascade="all, delete-orphan")
-    applications: Mapped[list["Application"]] = relationship(back_populates="listing")  # noqa: F821
+    # passive_deletes=True on both: deleting a Listing must not try to null
+    # out child FKs (they're NOT NULL) — defer entirely to each FK's
+    # ON DELETE CASCADE in the database instead.
+    scores: Mapped[list["Score"]] = relationship(
+        back_populates="listing", cascade="all, delete-orphan", passive_deletes=True
+    )
+    applications: Mapped[list["Application"]] = relationship(  # noqa: F821
+        back_populates="listing", passive_deletes=True
+    )
 
 
 class Score(Base):
     __tablename__ = "scores"
+    # latest_score filters (user_id, listing_id) ordered by scored_at — the
+    # hottest read in the app; the composite index serves it directly.
+    __table_args__ = (Index("ix_scores_user_listing_scored_at", "user_id", "listing_id", "scored_at"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
@@ -52,6 +62,10 @@ class Score(Base):
     reasons: Mapped[Optional[str]] = mapped_column(Text)
     red_flags: Mapped[Optional[list[Any]]] = mapped_column(JSON)
     model_used: Mapped[Optional[str]] = mapped_column(String(255))
+    # Cached natural-language fit explanation (Phase 07). Written lazily by
+    # GET /api/listings/:id/fit-explanation; nulled out if the score is
+    # recomputed so a stale paragraph never survives a rescore.
+    fit_paragraph: Mapped[Optional[str]] = mapped_column(Text)
     scored_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
 
     listing: Mapped[Listing] = relationship(back_populates="scores")

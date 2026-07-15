@@ -12,7 +12,12 @@ class ScoreRead(BaseModel):
     reasons: Optional[str] = None
     red_flags: Optional[list[Any]] = None
     model_used: Optional[str] = None
+    fit_paragraph: Optional[str] = None
     scored_at: datetime
+
+
+class FitExplanation(BaseModel):
+    paragraph: str
 
 
 class ListingSummary(BaseModel):
@@ -41,5 +46,16 @@ class ListingDetail(ListingWithScore):
     application_url: Optional[str] = None
     required_docs: Optional[list[Any]] = None
     description: Optional[str] = None
+    supervisor_name: Optional[str] = None  # never extracted today; always null
     first_seen: datetime
     last_seen: datetime
+
+
+class ListingRow(ListingWithScore):
+    """Row shape for the /opportunities table (Phase 06) — adds the
+    Application join + a keyword-derived funding classification."""
+
+    supervisor_name: Optional[str] = None  # never extracted today; always null
+    funding_type: str = "unknown"  # "fully_funded" | "partial" | "unknown"
+    status: Optional[str] = None  # Application.status, if tracked
+    application_id: Optional[int] = None

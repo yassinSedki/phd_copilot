@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Any, Optional
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -26,10 +26,29 @@ def mark_running(db: Session, job_id: int) -> None:
         db.commit()
 
 
-def update_progress(db: Session, job_id: int, progress: int) -> None:
+def update_progress(db: Session, job_id: int, progress: int, meta: Optional[dict[str, Any]] = None) -> None:
     job = db.get(Job, job_id)
     if job:
         job.progress = progress
+        if meta is not None:
+            job.progress_meta = {**(job.progress_meta or {}), **meta}
+        db.commit()
+
+
+def mark_awaiting_continue(db: Session, job_id: int, meta: Optional[dict[str, Any]] = None) -> None:
+    job = db.get(Job, job_id)
+    if job:
+        job.status = "awaiting_continue"
+        if meta is not None:
+            job.progress_meta = {**(job.progress_meta or {}), **meta}
+        db.commit()
+
+
+def mark_cancelled(db: Session, job_id: int) -> None:
+    job = db.get(Job, job_id)
+    if job:
+        job.status = "cancelled"
+        job.finished_at = utcnow()
         db.commit()
 
 

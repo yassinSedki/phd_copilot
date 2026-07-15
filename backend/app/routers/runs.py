@@ -8,6 +8,7 @@ from app.auth.deps import get_current_user
 from shared.database import get_db
 from shared.models import User
 from shared.repositories import jobs as jobs_repo
+from shared.repositories import search_runs as search_runs_repo
 from app.schemas.job import JobRead, RunResponse
 
 router = APIRouter(prefix="/api", tags=["runs"])
@@ -26,16 +27,19 @@ def start_run_url(
 ) -> RunResponse:
     """Universal URL pipeline. Hand any PhD/job listing URL — the scraper
     agent (LangGraph) fetches it (with Playwright fallback), extracts
-    listings, parses and scores them in batches of BATCH_SIZE."""
+    listings, pre-filters against the user's hard constraints, parses and
+    scores them in batches of BATCH_SIZE. Pauses for a "continue?" prompt
+    every few pages (see /api/search-runs/:id/continue)."""
 
     if not body.url.lower().startswith(("http://", "https://")):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="url must start with http(s)://")
 
     job = jobs_repo.create(db, current_user.id, job_type="run_pipeline_url")
+    search_run = search_runs_repo.create(db, current_user.id, url=body.url, job_id=job.id, status="queued")
     from worker.tasks.run_pipeline import run_pipeline_url
 
-    background_tasks.add_task(run_pipeline_url, current_user.id, job.id, body.url)
-    return RunResponse(job_id=job.id)
+    background_tasks.add_task(run_pipeline_url, current_user.id, job.id, body.url, search_run_id=search_run.id)
+    return RunResponse(job_id=job.id, search_run_id=search_run.id)
 
 
 @router.post("/runs", response_model=RunResponse, status_code=status.HTTP_202_ACCEPTED)
