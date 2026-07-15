@@ -5,6 +5,10 @@ from pydantic import BaseModel, ConfigDict, Field  # noqa: F401
 
 class ProfileBase(BaseModel):
     full_name: Optional[str] = None
+    # Contact details as extracted from the CV — distinct from the account's
+    # login email, which is never overwritten by CV extraction.
+    contact_email: Optional[str] = None
+    phone: Optional[str] = None
     research_summary: Optional[str] = None
     interests: Optional[str] = None
     skills: Optional[list[Any]] = None
@@ -13,20 +17,26 @@ class ProfileBase(BaseModel):
     languages: Optional[str] = None
     location_prefs: Optional[str] = None
     constraints: Optional[str] = None
-    cv_path: Optional[str] = None
 
 
 class ProfileUpdate(ProfileBase):
-    pass
+    """Client-updatable fields only. `is_onboarded` is set exclusively by
+    POST /onboarding/complete and `cv_path` by the CV upload flows — exposing
+    them here let clients skip onboarding / overwrite the stored CV path."""
 
 
 class ProfileRead(ProfileBase):
     model_config = ConfigDict(from_attributes=True)
     id: int
     user_id: int
+    cv_path: Optional[str] = None
     cv_filename: Optional[str] = None
     cv_text: Optional[str] = None
     cv_sha256: Optional[str] = None
+    # Structured search constraints (countries/funding/…) — editable from
+    # Settings via POST /onboarding/constraints; drives the prefilter.
+    profile_constraints: Optional[dict[str, Any]] = None
+    is_onboarded: bool = False
 
 
 class CVUploadResult(BaseModel):
@@ -37,7 +47,7 @@ class CVUploadResult(BaseModel):
 
 class SettingsBase(BaseModel):
     filters: Optional[dict[str, Any]] = None
-    score_threshold: int = Field(default=70, ge=0, le=100)
+    score_threshold: int = Field(default=60, ge=0, le=100)
     scoring_model: Optional[str] = None
     drafting_model: Optional[str] = None
     schedule: Optional[str] = None

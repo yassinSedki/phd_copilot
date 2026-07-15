@@ -1,10 +1,8 @@
-from pathlib import Path
-
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from sqlalchemy.orm import Session
 
 from app.auth.deps import get_current_user
-from shared.config import get_settings as get_app_settings
+from app.services.cv_intake import store_and_extract_cv
 from shared.database import get_db
 from shared.models import User
 from shared.repositories import users as users_repo
@@ -15,7 +13,6 @@ from app.schemas.profile import (
     SettingsRead,
     SettingsUpdate,
 )
-from shared.cv.extract import SUPPORTED, cv_sha256, extract_cv_text
 
 router = APIRouter(prefix="/api", tags=["profile"])
 
@@ -84,42 +81,5 @@ async def upload_cv(
     extracted with pypdf/python-docx, and saved to Profile.cv_text so the
     scorer and drafter can use it directly."""
 
-    filename = file.filename or "cv.bin"
-    suffix = Path(filename).suffix.lower()
-    if suffix not in SUPPORTED:
-        raise HTTPException(
-            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
-            detail=f"Unsupported file type {suffix!r}. Supported: {', '.join(SUPPORTED)}",
-        )
-
-    content = await file.read()
-    if not content:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="empty file")
-
-    sha = cv_sha256(content)
-    app_settings = get_app_settings()
-    cv_dir = app_settings.storage_dir / "cvs" / f"user_{current_user.id}"
-    cv_dir.mkdir(parents=True, exist_ok=True)
-    save_path = cv_dir / f"{sha[:16]}{suffix}"
-    save_path.write_bytes(content)
-
-    try:
-        text = extract_cv_text(save_path)
-    except RuntimeError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=str(exc),
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
-
-    profile = users_repo.get_profile(db, current_user.id)
-    if profile is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="profile not found")
-    profile.cv_filename = filename
-    profile.cv_path = str(save_path)
-    profile.cv_text = text
-    profile.cv_sha256 = sha
-    db.commit()
-
+    filename, text, sha = await store_and_extract_cv(file, current_user.id, db)
     return CVUploadResult(filename=filename, text_length=len(text), sha256=sha)
