@@ -1,20 +1,15 @@
-# Cover letter — {{position_title}}
-
-**{{full_name}}**
-Applying for **{{position_title}}**
-{{institution}}, {{city}} {{country}}
+{{full_name}}
+{{position_title}} — {{institution}}, {{city}} {{country}}
 
 ---
 
 Dear Hiring Committee,
 
-I am writing to apply for the **{{position_title}}** position at {{institution}}. The opening sits squarely within my research interests in **{{interests}}**, and the focus on {{research_field}} matches the direction my work has been moving in for some time.
+[Opening: one or two sentences on why this specific role caught your interest — a genuine, specific reason, not a restatement of the job title. State the position title and institution name ONCE here and never again in the letter.]
 
-In summary: {{research_summary}}
+[Body, 2 short paragraphs: the strongest concrete evidence from the profile that maps to what this listing needs — named projects, tools, outcomes, in your own natural voice. Ground every claim in the profile; never invent achievements. Reference the listing's actual focus area in plain English, not as a copied taxonomy string.]
 
-What attracts me to this particular role is the combination of strong infrastructure at {{institution}} and the chance to contribute to {{research_field}} with methods I already use day-to-day. I would be glad to discuss how my background fits the project in more detail at interview.
-
-Thank you for considering my application.
+[Closing: one sentence, confident and brief — no restating of qualifications already covered above.]
 
 Sincerely,
 {{full_name}}

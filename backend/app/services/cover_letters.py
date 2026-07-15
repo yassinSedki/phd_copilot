@@ -86,8 +86,8 @@ def generate_initial(
     cover.model_used = drafted.model_used
     cover.updated_at = utcnow()
 
-    if application.status in {sm.REVIEWING, sm.SHORTLISTED}:
-        application.status = sm.DRAFTING
+    if application.status == sm.SAVED:
+        application.status = sm.IN_PROGRESS
 
     application.cover_letter_path = None  # the body lives in the DB now
     db.flush()
