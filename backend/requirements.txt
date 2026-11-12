@@ -38,3 +38,7 @@ apscheduler==3.10.4
 # Database (PostgreSQL is the default runtime)
 psycopg2-binary==2.9.10
 alembic==1.14.0
+
+# Blob file store (FILE_STORE__BACKEND=azure); imported lazily
+azure-identity==1.19.0
+azure-storage-blob==12.24.0

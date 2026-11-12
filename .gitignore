@@ -15,6 +15,17 @@ pip-wheel-metadata/
 .env
 .env.*
 !.env.example
+!.env.k8s.example
+
+# ---- Terraform ---------------------------------------------------------------
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example
+backend.hcl
+tfplan
+.terraform.lock.hcl.bak
 
 # ---- Databases (local dev only — Postgres is the real target) -------------
 *.db

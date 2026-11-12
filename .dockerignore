@@ -1,0 +1,24 @@
+# Build context for backend/ and worker/ images (context: repo root).
+# The frontend has its own context and its own frontend/.dockerignore.
+
+.git
+.github
+.env
+.env.*
+!.env.example
+**/__pycache__
+**/*.pyc
+.venv
+venv
+.pytest_cache
+.ruff_cache
+.mypy_cache
+storage/
+frontend/
+deploy/
+infra/
+tests/
+architecture/
+backend/architecture/
+*.mp4
+# NOT ignoring *.md: worker/pipeline/draft/templates/*.md are runtime files.

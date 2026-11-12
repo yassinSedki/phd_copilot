@@ -1,30 +1,78 @@
-# Architecture section 14.
+# Local full stack: Postgres → one-shot migration → API → frontend.
 #
-# Postgres + Redis are NOT in this file anymore. DATABASE_URL in .env points
-# at a hosted Postgres (e.g. Supabase). Redis isn't needed until the arq
-# worker split lands.
+#   docker compose up --build        app on http://localhost:5173
+#   FRONTEND_PORT=18080 docker compose up   if `make front` already holds 5173
+#
+# The local Postgres overrides DATABASE_URL from .env, so `make backend`
+# can keep pointing at hosted Supabase while compose stays self-contained.
+# Requires JWT_SECRET (32+ chars) in .env — create_app() refuses to start
+# without it.
 
 services:
-  backend:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: phd
+      POSTGRES_PASSWORD: phd
+      POSTGRES_DB: phd
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U phd -d phd"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # Mirrors the Kubernetes pre-upgrade migration Job: runs once, then exits.
+  migrate:
     build:
       context: .
       dockerfile: backend/Dockerfile
+    image: phd-backend:local
     env_file: .env
     environment:
+      DATABASE_URL: postgresql+psycopg2://phd:phd@postgres:5432/phd
+      STORAGE_DIR: /tmp/storage
+    command: ["python", "migrations/bootstrap.py"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  backend:
+    image: phd-backend:local
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+psycopg2://phd:phd@postgres:5432/phd
       STORAGE_DIR: /data/storage
     volumes:
       - storage:/data/storage
     ports:
-      - "8000:8000"
+      - "${BACKEND_PORT:-8000}:8000"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      # Slim image has no curl.
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/ready')"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 20s
 
   frontend:
     build:
-      context: .
-      dockerfile: frontend/Dockerfile
-    depends_on:
-      - backend
+      context: ./frontend
+    image: phd-frontend:local
     ports:
-      - "5173:80"
+      - "${FRONTEND_PORT:-5173}:8080"
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
 
   # Heavier image: Playwright + Chromium for JS-shell fallback. Not started
   # by default (backend currently runs the pipeline via BackgroundTasks).
@@ -42,4 +90,5 @@ services:
     profiles: ["worker"]
 
 volumes:
+  pgdata:
   storage:
