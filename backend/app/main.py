@@ -2,10 +2,12 @@ import logging
 import os
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import text
 
 from shared.config import get_settings
+from shared.database import engine
 from app.routers import (
     applications,
     auth,
@@ -94,12 +96,28 @@ def create_app() -> FastAPI:
     app.include_router(referees.router)
     app.include_router(reference_requests.router)
 
+    # Liveness: "is the process alive?" Touches nothing external, so a DB
+    # outage never makes Kubernetes restart every pod at once. async so it
+    # answers on the event loop even when the sync-route threadpool is
+    # saturated by slow LLM calls — a busy pod is not a dead pod.
     @app.get("/api/health", tags=["meta"])
-    def health() -> dict:
+    async def health() -> dict:
         return {
             "status": "ok",
             "llm_provider": settings.llm.provider,
         }
+
+    # Readiness: "can this pod serve traffic right now?" A failing DB takes
+    # the pod out of the Service (no restart) until the DB is back.
+    @app.get("/api/ready", tags=["meta"])
+    def ready(response: Response) -> dict:
+        try:
+            with engine.connect() as conn:
+                conn.execute(text("SELECT 1"))
+        except Exception:
+            response.status_code = 503
+            return {"status": "db-unavailable"}
+        return {"status": "ready"}
 
     return app
 

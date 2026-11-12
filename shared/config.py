@@ -94,6 +94,20 @@ class SMTPSettings(BaseModel):
     use_tls: bool = True
 
 
+class FileStoreSettings(BaseModel):
+    """Where uploaded CVs and raw scrape snapshots are written. Read by
+    `shared.storage.get_storage()`.
+
+    FILE_STORE__BACKEND=local  → settings.storage_dir (dev, compose, kind)
+    FILE_STORE__BACKEND=azure  → Azure Blob, authenticated by identity
+                                 (workload identity on AKS, `az login` locally)
+    """
+
+    backend: str = "local"
+    azure_account_url: str = ""  # https://<account>.blob.core.windows.net/
+    azure_container: str = "phd-files"
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -112,6 +126,12 @@ class Settings(BaseSettings):
     # tests via DATABASE_URL=sqlite:///./local.db, but production + dev both
     # assume Postgres (docker compose brings one up locally).
     database_url: str = "postgresql+psycopg2://phd:phd@localhost:5432/phd"
+
+    # Per-process connection pool. Total connections across the deployment =
+    # replicas × (pool_size + max_overflow): keep that under the Postgres /
+    # Supabase connection limit when raising the autoscaler's maxReplicas.
+    db_pool_size: int = 5
+    db_max_overflow: int = 5
 
     storage_dir: Path = Path("./storage")
 
@@ -132,6 +152,7 @@ class Settings(BaseSettings):
     llm: LLMSettings = Field(default_factory=LLMSettings)
     embedding: EmbeddingSettings = Field(default_factory=EmbeddingSettings)
     smtp: SMTPSettings = Field(default_factory=SMTPSettings)
+    file_store: FileStoreSettings = Field(default_factory=FileStoreSettings)
 
     # ---- back-compat env vars (single-key convention)
 
