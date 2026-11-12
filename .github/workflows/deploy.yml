@@ -1,0 +1,130 @@
+# Delivery on every merge to main:
+#   1. build both images, tag them with the commit SHA, push to GHCR;
+#   2. deploy those exact images with Helm into a throwaway kind cluster
+#      inside the runner (GitHub can't reach a cluster on a laptop), and
+#      smoke-test it. --atomic rolls the release back if anything fails.
+# When the AKS cluster exists (infra/terraform), add a deploy-aks job after
+# deploy-kind using azure/login with OIDC (no stored cloud secret).
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write # push to GHCR with the built-in GITHUB_TOKEN
+
+concurrency:
+  group: deploy-main
+  cancel-in-progress: false # never kill a deploy halfway through
+
+env:
+  SHA: ${{ github.sha }}
+
+jobs:
+  build-push:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Lowercase owner (registry paths must be lowercase)
+        run: echo "OWNER=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_ENV"
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push backend
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: backend/Dockerfile
+          push: true
+          tags: ghcr.io/${{ env.OWNER }}/phd-backend:${{ env.SHA }}
+          labels: org.opencontainers.image.revision=${{ env.SHA }}
+          cache-from: type=gha,scope=backend
+          cache-to: type=gha,mode=max,scope=backend
+
+      - name: Build and push frontend
+        uses: docker/build-push-action@v6
+        with:
+          context: frontend
+          push: true
+          tags: ghcr.io/${{ env.OWNER }}/phd-frontend:${{ env.SHA }}
+          labels: org.opencontainers.image.revision=${{ env.SHA }}
+          cache-from: type=gha,scope=frontend
+          cache-to: type=gha,mode=max,scope=frontend
+
+  deploy-kind:
+    needs: build-push
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Lowercase owner
+        run: echo "OWNER=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_ENV"
+
+      - uses: helm/kind-action@v1
+        with:
+          cluster_name: ci
+
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.16.3 # pinned: Helm 4 renames --atomic
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Pull the exact images pushed above and side-load them, so the private
+      # GHCR packages need no imagePullSecret inside the throwaway cluster.
+      - name: Load the pushed images into kind
+        run: |
+          for img in phd-backend phd-frontend; do
+            docker pull "ghcr.io/$OWNER/$img:$SHA"
+            kind load docker-image "ghcr.io/$OWNER/$img:$SHA" --name ci
+          done
+
+      - name: Dev database and secret
+        run: |
+          kubectl apply -f deploy/kind/postgres.yaml
+          kubectl rollout status deploy/postgres --timeout=180s
+          # Random per run, never printed, gone with the cluster.
+          kubectl create secret generic phd-secrets \
+            --from-literal=DATABASE_URL=postgresql+psycopg2://phd:phd@postgres:5432/phd \
+            --from-literal=JWT_SECRET="$(openssl rand -hex 32)"
+
+      - name: Helm deploy (atomic)
+        run: |
+          helm upgrade --install phd deploy/helm/phd-copilot \
+            --set image.backend.repository="ghcr.io/$OWNER/phd-backend" \
+            --set image.backend.tag="$SHA" \
+            --set image.frontend.repository="ghcr.io/$OWNER/phd-frontend" \
+            --set image.frontend.tag="$SHA" \
+            --set ingress.enabled=false \
+            --set backend.autoscaling.enabled=false \
+            --atomic --wait --timeout 5m
+
+      - name: Smoke test
+        run: |
+          kubectl run smoke --rm -i --restart=Never --image=curlimages/curl:8.10.1 -- \
+            sh -c 'curl -fsS http://backend:8000/api/ready && curl -fsS -o /dev/null http://frontend:8080/'
+
+      - name: Debug info
+        if: failure()
+        run: |
+          kubectl get pods,jobs,svc -o wide
+          kubectl get events --sort-by=.lastTimestamp | tail -40
+          kubectl logs job/phd-migrate --tail=100 || true
+          kubectl logs -l app=backend --tail=100 --all-containers || true
+          helm history phd || true
