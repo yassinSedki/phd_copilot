@@ -48,7 +48,7 @@ def list_for_user(
             .over(partition_by=Score.listing_id, order_by=desc(Score.scored_at))
             .label("rn"),
         )
-        .where(Score.user_id == user_id, Score.listing_id.in_([l.id for l in listings]))
+        .where(Score.user_id == user_id, Score.listing_id.in_([lst.id for lst in listings]))
         .subquery()
     )
     latest_ids = list(db.scalars(select(ranked.c.score_id).where(ranked.c.rn == 1)))

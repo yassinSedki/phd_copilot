@@ -8,14 +8,15 @@ blocking I/O, so they run in a worker thread rather than on the event loop.
 from __future__ import annotations
 
 import asyncio
+import tempfile
 from pathlib import Path
 
 from fastapi import HTTPException, UploadFile, status
 from sqlalchemy.orm import Session
 
-from shared.config import get_settings
 from shared.cv.extract import SUPPORTED, cv_sha256, extract_cv_text
 from shared.repositories import users as users_repo
+from shared.storage import get_storage
 
 
 async def store_and_extract_cv(file: UploadFile, user_id: int, db: Session) -> tuple[str, str, str]:
@@ -39,24 +40,27 @@ async def store_and_extract_cv(file: UploadFile, user_id: int, db: Session) -> t
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="profile not found")
 
     sha = cv_sha256(content)
-    settings = get_settings()
-    cv_dir = settings.storage_dir / "cvs" / f"user_{user_id}"
-    save_path = cv_dir / f"{sha[:16]}{suffix}"
+    key = f"cvs/user_{user_id}/{sha[:16]}{suffix}"
 
-    def _write_and_extract() -> str:
-        cv_dir.mkdir(parents=True, exist_ok=True)
-        save_path.write_bytes(content)
-        return extract_cv_text(save_path)
+    def _extract_and_store() -> tuple[str, str]:
+        # Extraction needs a real file path; use a temp file so the durable
+        # copy can live in any storage backend (local disk or blob bucket).
+        # Only a CV that parsed successfully gets stored.
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp) / f"cv{suffix}"
+            tmp_path.write_bytes(content)
+            text = extract_cv_text(tmp_path)
+        return text, get_storage().save(key, content)
 
     try:
-        text = await asyncio.to_thread(_write_and_extract)
+        text, stored_at = await asyncio.to_thread(_extract_and_store)
     except RuntimeError as exc:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc))
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
 
     profile.cv_filename = filename
-    profile.cv_path = str(save_path)
+    profile.cv_path = stored_at
     profile.cv_text = text
     profile.cv_sha256 = sha
     db.commit()

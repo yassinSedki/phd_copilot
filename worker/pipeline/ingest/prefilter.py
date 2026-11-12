@@ -56,7 +56,7 @@ async def _embedding_pass(
 
     try:
         profile_vec = await embeddings.embed(profile_text[:2000], input_type="search_query")
-        vecs = await embeddings.embed_batch([_listing_text(l) for l in listings])
+        vecs = await embeddings.embed_batch([_listing_text(lst) for lst in listings])
     except Exception as exc:
         log.warning("prefilter pass A skipped (embedding failure): %s", exc)
         return [], [], list(listings)
@@ -99,12 +99,12 @@ async def _llm_pass(
         records = [
             {
                 "id": i,
-                "title": l.title,
-                "institution": l.institution,
-                "location": l.city or l.country,
-                "snippet": (l.description or "")[:400],
+                "title": lst.title,
+                "institution": lst.institution,
+                "location": lst.city or lst.country,
+                "snippet": (lst.description or "")[:400],
             }
-            for i, l in enumerate(batch)
+            for i, lst in enumerate(batch)
         ]
         try:
             out = await asyncio.to_thread(

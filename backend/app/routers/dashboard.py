@@ -1,4 +1,3 @@
-from datetime import timedelta
 from typing import Optional
 
 from fastapi import APIRouter, Depends
@@ -19,7 +18,7 @@ from app.schemas.dashboard import (
 )
 from app.services import reference_requests as ref_service
 from shared.database import get_db
-from shared.models import Application, Listing, Score, SearchRun, User
+from shared.models import Listing, Score, SearchRun, User
 from shared.models.base import utcnow
 from shared.repositories import applications as app_repo
 from shared.repositories import users as users_repo

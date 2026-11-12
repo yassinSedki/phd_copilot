@@ -16,7 +16,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import traceback
-from pathlib import Path
 from typing import Any, Optional
 
 from sqlalchemy.orm import Session
@@ -30,6 +29,7 @@ from shared.repositories import search_runs as search_runs_repo
 from shared.repositories import users as users_repo
 from shared.services import applications as app_service
 from shared.services import state_machine as sm
+from shared.storage import get_storage
 from worker.pipeline.ingest import run_scraper_graph
 from worker.pipeline.ingest.base import RawListing
 from worker.pipeline.ingest.dedupe import dedupe_listings
@@ -104,13 +104,9 @@ def _get_embeddings(settings: Any) -> Optional[Any]:
         return None
 
 
-def _write_raw(storage_dir: Path, source: str, source_key: str, raw_text: str) -> str:
-    raw_dir = storage_dir / "raw" / source
-    raw_dir.mkdir(parents=True, exist_ok=True)
+def _write_raw(source: str, source_key: str, raw_text: str) -> str:
     safe_key = "".join(c if c.isalnum() or c in "-_." else "_" for c in source_key)[:120]
-    path = raw_dir / f"{safe_key}.txt"
-    path.write_text(raw_text, encoding="utf-8")
-    return str(path)
+    return get_storage().save(f"raw/{source}/{safe_key}.txt", raw_text.encode("utf-8"))
 
 
 async def _prefilter_and_finalize(
@@ -228,7 +224,7 @@ async def _prefilter_and_finalize(
     for batch_start in range(0, total, batch_size):
         batch = raws[batch_start : batch_start + batch_size]
         for raw in batch:
-            raw_path = _write_raw(settings.storage_dir, raw.source, raw.source_key, raw.raw_text)
+            raw_path = _write_raw(raw.source, raw.source_key, raw.raw_text)
             listing = upsert_listing(db, user_id, raw, raw_path=raw_path)
             # async variants keep the blocking LLM calls off the event
             # loop (Session writes stay on this thread).
@@ -516,7 +512,7 @@ def run_pipeline(user_id: int, job_id: int) -> None:
         total = max(1, len(raws))
         scored: list[tuple[Listing, float]] = []
         for index, raw in enumerate(raws, start=1):
-            raw_path = _write_raw(settings.storage_dir, raw.source, raw.source_key, raw.raw_text)
+            raw_path = _write_raw(raw.source, raw.source_key, raw.raw_text)
             listing = upsert_listing(db, user_id, raw, raw_path=raw_path)
             parse_listing(db, llm, listing, raw.raw_text)
             score_row = score_listing(

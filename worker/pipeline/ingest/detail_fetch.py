@@ -90,4 +90,4 @@ async def enrich_listings(
                 listing, llm, user_agent=user_agent, playwright_enabled=playwright_enabled, source_url=source_url
             )
 
-    return list(await asyncio.gather(*(_bounded(l) for l in listings)))
+    return list(await asyncio.gather(*(_bounded(lst) for lst in listings)))

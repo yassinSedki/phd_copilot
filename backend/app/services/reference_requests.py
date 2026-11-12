@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
 from shared.config import get_settings
-from shared.models import Application, Profile, Referee, ReferenceRequest, User
+from shared.models import Application, Profile, Referee, ReferenceRequest
 from shared.models.base import utcnow
 from shared.repositories import referees as referee_repo
 from shared.repositories import reference_requests as request_repo

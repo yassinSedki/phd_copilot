@@ -5,12 +5,11 @@ LLM factory so providers can be swapped via .env.
 
 from __future__ import annotations
 
-from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
 from sqlalchemy import select
-from sqlalchemy.orm import Session, selectinload
+from sqlalchemy.orm import Session
 
 from shared.config import get_settings
 from shared.models import Application, CoverLetter, Listing, Profile

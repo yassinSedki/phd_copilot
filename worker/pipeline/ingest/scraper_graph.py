@@ -494,8 +494,8 @@ def check_pagination(state: dict[str, Any]) -> dict[str, Any]:
     all_listings = list(state.get("all_listings") or [])
     prev = all_listings[: len(all_listings) - len(current)]
     if prev:
-        prev_keys = {_listing_key(l) for l in prev}
-        overlap = sum(1 for l in current if _listing_key(l) in prev_keys)
+        prev_keys = {_listing_key(lst) for lst in prev}
+        overlap = sum(1 for lst in current if _listing_key(lst) in prev_keys)
         if overlap / len(current) >= 0.95:
             log.info("check_pagination: page %d is ≥95%% repeats — loop guard stop", page)
             return {**state, "next_url": None, "stop_reason": "loop_detected"}

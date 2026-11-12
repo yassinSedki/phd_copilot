@@ -12,7 +12,7 @@ from shared.models import User
 from shared.repositories import applications as app_repo
 from shared.repositories import listings as listing_repo
 from shared.repositories import users as users_repo
-from app.schemas.listing import FitExplanation, ListingDetail, ListingRow, ListingWithScore, ScoreRead
+from app.schemas.listing import FitExplanation, ListingDetail, ListingRow, ScoreRead
 
 router = APIRouter(prefix="/api/listings", tags=["listings"])
 

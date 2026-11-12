@@ -438,7 +438,7 @@ export interface ContactRead {
 /** Ask-the-AI-to-revise turn for email drafts (outreach / reference
  * requests) — lighter than the document ChatTurn (no `at` timestamp). */
 export interface EmailChatTurn {
-  role: string;
+  role: "user" | "assistant";
   content: string;
 }
 

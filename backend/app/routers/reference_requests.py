@@ -17,7 +17,6 @@ from app.services import mailer
 from app.services import reference_requests as ref_service
 from shared.database import get_db
 from shared.models import User
-from shared.repositories import applications as app_repo
 from app.routers._shared import get_application_or_404
 from shared.repositories import referees as referee_repo
 from shared.repositories import reference_requests as request_repo

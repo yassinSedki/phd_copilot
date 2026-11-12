@@ -11,7 +11,6 @@ from app.schemas.document import (
 )
 from app.services import documents as doc_service
 from shared.database import get_db
-from shared.repositories import applications as app_repo
 from app.routers._shared import get_application_or_404
 from shared.repositories import users as users_repo
 from shared.models import User
