@@ -19,7 +19,6 @@ re-raise for strict behaviour.
 
 from __future__ import annotations
 
-import json
 import logging
 import re
 from dataclasses import asdict
@@ -46,6 +45,7 @@ from shared.llm.prompts import (
     score_listing as score_prompt,
 )
 from shared.llm.providers.stub import StubLLMClient
+from shared.llm.scoring import compute_fit_score
 from shared.llm.types import (
     DraftedDocument,
     DraftedLetter,
@@ -243,26 +243,12 @@ class StandardLLMClient(LLMClient):
                 model_used=model or self._model,
             )
 
-        # The code, not the model, owns the total (AGENT.md §3.7): clamp each
-        # dimension to its rubric maximum and sum.
-        rubric: dict[str, float] = {}
-        for key, cap in score_prompt.RUBRIC_MAX.items():
-            try:
-                value = float(rubric_raw.get(key, 0))
-            except (TypeError, ValueError):
-                value = 0.0
-            rubric[key] = max(0.0, min(float(cap), value))
-        total = sum(rubric.values())
-
-        # Hard-fail caps applied in code, never left to model calibration.
-        constraints_text = str(profile.get("constraints") or "").lower()
-        requires_funding = "fund" in constraints_text or "scholarship" in constraints_text
-        if requires_funding and flags.get("funding_confirmed") is False:
-            total = min(total, 40.0)
-            red_flags.append("User requires funding; listing appears unfunded")
-        if flags.get("degree_match") is False:
-            total = min(total, 30.0)
-            red_flags.append("Degree/career-stage requirement may not be met")
+        # The code, not the model, owns the total (AGENT.md §3.7): clamp,
+        # sum and hard-fail caps live in a pure, unit-tested function.
+        total, rubric, cap_flags = compute_fit_score(
+            rubric_raw, flags, str(profile.get("constraints") or "")
+        )
+        red_flags.extend(cap_flags)
 
         # Store the breakdown normalized to /100 per dimension so UI bars
         # remain comparable across dimensions with different rubric weights.

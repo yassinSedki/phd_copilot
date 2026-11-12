@@ -77,4 +77,6 @@ target-version = "py311"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
-testpaths = ["backend/tests", "worker/tests"]
+testpaths = ["tests"]
+# Lets `import shared...` / `import app...` work without installing the package (CI).
+pythonpath = [".", "backend"]
