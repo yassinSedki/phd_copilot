@@ -1,0 +1,25 @@
+# AKS (Part D). Fill the <...> placeholders from `terraform output`.
+#   helm upgrade --install phd deploy/helm/phd-copilot -n phd-prod \
+#     -f deploy/helm/phd-copilot/values-prod.yaml --set image.backend.tag=<sha> ...
+image:
+  backend:
+    repository: <acr_login_server>/phd-backend
+  frontend:
+    repository: <acr_login_server>/phd-frontend
+
+config:
+  LLM__PROVIDER: cohere
+  EMBEDDING__PROVIDER: cohere
+  FILE_STORE__BACKEND: azure
+  FILE_STORE__AZURE_ACCOUNT_URL: <storage_account_url>
+  FILE_STORE__AZURE_CONTAINER: phd-files
+
+storage:
+  persistent: false # files live in the blob bucket; no RWO volume pinning pods to one node
+
+backend:
+  autoscaling:
+    minReplicas: 2 # survive a single pod or node loss
+
+workloadIdentity:
+  clientId: <app_identity_client_id>

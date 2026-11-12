@@ -1,0 +1,7 @@
+# Local kind cluster (`make helm-dev`).
+config:
+  LOG_LEVEL: DEBUG
+
+backend:
+  autoscaling:
+    maxReplicas: 3

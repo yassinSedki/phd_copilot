@@ -1,0 +1,93 @@
+{{- $wi := .Values.workloadIdentity.clientId }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+  labels:
+    app: backend
+    {{- include "phd.labels" . | nindent 4 }}
+spec:
+  {{- if not .Values.backend.autoscaling.enabled }}
+  replicas: {{ .Values.backend.replicas }}
+  {{- end }}
+  selector:
+    matchLabels:
+      app: backend
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0 # never drop below current capacity during a rollout
+      maxSurge: 1
+  template:
+    metadata:
+      labels:
+        app: backend
+        {{- if $wi }}
+        azure.workload.identity/use: "true"
+        {{- end }}
+      annotations:
+        # ConfigMap change → new hash → pods roll and pick up the new env.
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+    spec:
+      {{- if $wi }}
+      serviceAccountName: {{ .Values.workloadIdentity.serviceAccountName }}
+      {{- end }}
+      terminationGracePeriodSeconds: {{ .Values.backend.terminationGracePeriodSeconds }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        fsGroup: 10001 # mounted volume becomes writable for UID 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: backend
+          image: {{ include "phd.backendImage" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 8000
+          envFrom:
+            - configMapRef:
+                name: phd-config
+            - secretRef:
+                name: {{ .Values.existingSecret }}
+          # Boot imports langchain/langgraph: allow up to 60 s before the
+          # other probes start counting.
+          startupProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            periodSeconds: 2
+            failureThreshold: 30
+          # DB reachable? If not, stop routing traffic here (no restart).
+          readinessProbe:
+            httpGet:
+              path: /api/ready
+              port: http
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+          # Process wedged? Restart it. Never checks external dependencies.
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            {{- toYaml .Values.backend.resources | nindent 12 }}
+          securityContext:
+            {{- include "phd.containerSecurityContext" . | nindent 12 }}
+          volumeMounts:
+            - name: storage
+              mountPath: /data/storage
+      volumes:
+        - name: storage
+          {{- if .Values.storage.persistent }}
+          persistentVolumeClaim:
+            claimName: phd-storage
+          {{- else }}
+          # Scratch only: durable files go to the blob bucket in this mode.
+          emptyDir: {}
+          {{- end }}

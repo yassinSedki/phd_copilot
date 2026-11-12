@@ -11,7 +11,8 @@ PORT   ?= 8000
 
 .DEFAULT_GOAL := help
 .PHONY: help install dev backend front migrate migrate-new db-reset \
-        shell lint test clean docker-up docker-down
+        shell lint test clean docker-up docker-down \
+        kind-up kind-down kind-load k8s-secret helm-dev helm-lint
 
 help:
 	@echo ""
@@ -33,6 +34,12 @@ help:
 	@echo ""
 	@echo "  make docker-up             docker compose up --build"
 	@echo "  make docker-down           docker compose down"
+	@echo ""
+	@echo "  make kind-up               local k8s cluster + ingress-nginx + metrics-server + dev Postgres"
+	@echo "  make k8s-secret            create/update the phd-secrets Secret from .env.k8s"
+	@echo "  make helm-dev              build, load into kind, helm upgrade --install (tag = git SHA)"
+	@echo "  make helm-lint             lint + render the chart"
+	@echo "  make kind-down             delete the local cluster"
 	@echo ""
 
 install:
@@ -83,3 +90,46 @@ docker-up:
 
 docker-down:
 	docker compose down
+
+# ---- Kubernetes (local kind cluster) -----------------------------------------
+# Images are tagged with the git commit, never a reused tag like "dev": an
+# unchanged tag means an unchanged pod spec, so Kubernetes would keep running
+# the old image. Commit, then `make helm-dev`.
+TAG   ?= $(shell git rev-parse --short HEAD)
+NS    ?= phd-dev
+CHART := deploy/helm/phd-copilot
+
+kind-up:
+	kind create cluster --config deploy/kind/cluster.yaml
+	kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/main/deploy/static/provider/kind/deploy.yaml
+	kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
+	kubectl -n kube-system patch deployment metrics-server --type=json \
+		-p '[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--kubelet-insecure-tls"}]'
+	kubectl -n ingress-nginx wait --for=condition=ready pod \
+		--selector=app.kubernetes.io/component=controller --timeout=180s
+	kubectl create namespace $(NS)
+	kubectl -n $(NS) apply -f deploy/kind/postgres.yaml
+	kubectl -n $(NS) rollout status deploy/postgres --timeout=180s
+
+kind-down:
+	kind delete cluster --name phd
+
+kind-load:
+	docker build -f backend/Dockerfile -t phd-backend:$(TAG) .
+	docker build -t phd-frontend:$(TAG) frontend
+	kind load docker-image phd-backend:$(TAG) phd-frontend:$(TAG) --name phd
+
+k8s-secret:
+	@test -f .env.k8s || (echo "Missing .env.k8s — copy .env.k8s.example and fill it in"; exit 1)
+	kubectl -n $(NS) create secret generic phd-secrets --from-env-file=.env.k8s \
+		--dry-run=client -o yaml | kubectl apply -f -
+
+helm-lint:
+	helm lint $(CHART) -f $(CHART)/values-dev.yaml
+	helm template phd $(CHART) -f $(CHART)/values-dev.yaml > /dev/null
+
+helm-dev: kind-load
+	helm upgrade --install phd $(CHART) -n $(NS) \
+		-f $(CHART)/values-dev.yaml \
+		--set image.backend.tag=$(TAG) --set image.frontend.tag=$(TAG) \
+		--atomic --wait --timeout 5m

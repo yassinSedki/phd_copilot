@@ -1,0 +1,81 @@
+# Defaults for every environment. Override per environment with
+# values-<env>.yaml and per deploy with --set image.*.tag=<git sha>.
+
+image:
+  backend:
+    repository: phd-backend
+    tag: dev
+  frontend:
+    repository: phd-frontend
+    tag: dev
+  pullPolicy: IfNotPresent
+
+# Secret created OUTSIDE Helm (`make k8s-secret`, or kubectl in CI) so that:
+#   1. secret values never live in a values file that could reach git;
+#   2. it already exists when the pre-install migration hook runs — hooks run
+#      before any normal chart resource is created.
+# Expected keys: DATABASE_URL, JWT_SECRET, optionally COHERE_API_KEY, SMTP__PASSWORD.
+existingSecret: phd-secrets
+
+# Non-secret settings → ConfigMap → env vars (same names as in .env).
+config:
+  LLM__PROVIDER: stub
+  EMBEDDING__PROVIDER: stub
+  STORAGE_DIR: /data/storage
+  PLAYWRIGHT_ENABLED: "false" # Chromium is not in the backend image
+  LOG_LEVEL: INFO
+  DEFAULT_SCORE_THRESHOLD: "60"
+  LOW_SCORE_THRESHOLD: "40"
+  DB_POOL_SIZE: "5"
+  DB_MAX_OVERFLOW: "5"
+
+backend:
+  replicas: 1 # used only when autoscaling is disabled
+  # Pipeline runs inside the API process; give in-flight runs time to finish
+  # on scale-down / rollout before SIGKILL.
+  terminationGracePeriodSeconds: 120
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: "1"
+      memory: 768Mi
+  autoscaling:
+    enabled: true
+    minReplicas: 1
+    maxReplicas: 4
+    targetCPUUtilization: 70
+
+frontend:
+  replicas: 1
+  resources:
+    requests:
+      cpu: 20m
+      memory: 32Mi
+    limits:
+      cpu: 200m
+      memory: 128Mi
+
+storage:
+  # true  = PVC mounted at STORAGE_DIR (local / kind)
+  # false = emptyDir scratch; use with FILE_STORE__BACKEND=azure (prod)
+  persistent: true
+  size: 1Gi
+  storageClassName: "" # empty = cluster default
+
+migrations:
+  enabled: true
+
+ingress:
+  enabled: true
+  className: nginx
+  host: "" # empty = match any host (local); set a hostname in prod
+  maxBodySize: 10m # CV uploads
+  readTimeoutSeconds: 180 # LLM-backed routes
+
+# Azure Workload Identity (AKS only). When clientId is set, the backend runs
+# under a ServiceAccount federated with that managed identity — no keys.
+workloadIdentity:
+  clientId: ""
+  serviceAccountName: phd-backend

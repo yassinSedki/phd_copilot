@@ -1,0 +1,57 @@
+{{- if .Values.migrations.enabled }}
+{{- /*
+Runs migrations/bootstrap.py (alembic upgrade head, or create+stamp on an empty DB) ONCE, before any new backend pod starts.
+- Hook, not an init step in the API container: N replicas would race to
+  migrate, and a failed migration would crash-loop half a rollout.
+- If this Job fails, Helm aborts the release (and with --atomic rolls back),
+  so the old pods keep serving on the old schema.
+*/ -}}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: phd-migrate
+  labels:
+    app: phd-migrate
+    {{- include "phd.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "0"
+    # Delete the previous run when a new release starts; keep the latest one
+    # so its logs stay readable (`kubectl logs job/phd-migrate`).
+    "helm.sh/hook-delete-policy": before-hook-creation
+spec:
+  backoffLimit: 1
+  activeDeadlineSeconds: 300
+  template:
+    metadata:
+      labels:
+        app: phd-migrate
+    spec:
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: migrate
+          image: {{ include "phd.backendImage" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["python", "migrations/bootstrap.py"]
+          env:
+            # get_settings() creates STORAGE_DIR subfolders on import and no
+            # volume is mounted here: point it at a writable scratch dir.
+            - name: STORAGE_DIR
+              value: /tmp/storage
+          envFrom:
+            - secretRef:
+                name: {{ .Values.existingSecret }}
+          securityContext:
+            {{- include "phd.containerSecurityContext" . | nindent 12 }}
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              memory: 512Mi
+{{- end }}

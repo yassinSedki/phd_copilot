@@ -1,0 +1,6 @@
+apiVersion: v2
+name: phd-copilot
+description: PhD Copilot — FastAPI backend (with in-process pipeline) and React frontend
+type: application
+version: 0.1.0      # chart version: bump when templates change
+appVersion: "0.1.0" # app version; the image tag (commit SHA) is set per deploy
